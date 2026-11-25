@@ -1,0 +1,17 @@
+{
+  "name": "prompt-jump",
+  "description": "prompt-jump: jump back to earlier prompts in a long Claude Code session, plus compact-edits. 對話目錄外掛，另附改檔縮行。",
+  "owner": { "name": "niuhuii" },
+  "plugins": [
+    {
+      "name": "prompt-jump",
+      "source": "./plugins/prompt-jump",
+      "description": "Jump back to any prompt you sent in a long session: a prompt index pane, /prev /next /jump, bookmarks."
+    },
+    {
+      "name": "compact-edits",
+      "source": "./plugins/compact-edits",
+      "description": "Show Edit/Write/MultiEdit results as one line; Ctrl+O still shows the full diff."
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "name": "compact-edits",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "Show Claude Code's Edit/Write/MultiEdit results as one line (\"Edited a.ts +12 −3\"); Ctrl+O still shows the full diff. 改檔結果縮成一行，Ctrl+O 仍看得到完整對照。",
+  "author": { "name": "niuhuii" },
+  "homepage": "https://github.com/niuhuii/prompt-jump",
+  "repository": "https://github.com/niuhuii/prompt-jump",
+  "keywords": ["diff", "edits", "compact", "transcript", "中文"],
+  "icon": "./assets/icon.png",
+  "userConfig": {
+    "language": {
+      "type": "string",
+      "title": "Language / 介面語言",
+      "description": "auto follows Claude Code's language setting, then the system locale; falls back to English. auto 依 Claude Code 的語言設定、再依系統語言；都判斷不出時用英文。",
+      "options": ["auto", "zh-TW", "en"],
+      "default": "auto"
+    }
+  }
+}

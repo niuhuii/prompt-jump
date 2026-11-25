@@ -1,0 +1,53 @@
+{
+  "name": "prompt-jump",
+  "version": "0.2.0",
+  "license": "MIT",
+  "description": "Jump back to any prompt you sent in a long Claude Code session: a prompt index pane, /prev /next /jump, bookmarks. 對話目錄：列出你問過的每一則，點一下或打 /jump 就捲回那裡。",
+  "author": {
+    "name": "niuhuii"
+  },
+  "homepage": "https://github.com/niuhuii/prompt-jump",
+  "repository": "https://github.com/niuhuii/prompt-jump",
+  "keywords": [
+    "navigation",
+    "transcript",
+    "prompts",
+    "pane",
+    "scroll",
+    "bookmarks",
+    "中文"
+  ],
+  "icon": "./assets/icon.png",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "autoOpenPane": {
+      "type": "boolean",
+      "title": "Open the pane at start / 啟動時自動打開窗格",
+      "description": "Open the prompt index beside the chat when a session starts (it shows once the terminal is wide enough). Off: open it with /jump. 每次開始對話就打開對話目錄（終端機夠寬時才會顯示）；關掉則用 /jump 叫出。",
+      "default": true
+    },
+    "language": {
+      "type": "string",
+      "title": "Language / 介面語言",
+      "description": "auto follows Claude Code's language setting, then the system locale; falls back to English. auto 依 Claude Code 的語言設定、再依系統語言；都判斷不出時用英文。",
+      "options": [
+        "auto",
+        "zh-TW",
+        "en"
+      ],
+      "default": "auto"
+    },
+    "titles": {
+      "type": "boolean",
+      "title": "Auto titles (sends text to a model) / 自動標題（會把文字送給模型）",
+      "description": "Off by default. On: after each turn the prompt and the start of the answer (about 300 characters each) and the names of edited files are sent to a model to write a one-line title, one extra model call per turn, counted in your usage. Off: nothing is sent; the index shows your prompt as typed. 預設關。開啟後，每輪結束會把提問與回答開頭（各約 300 字）和改過的檔名送給模型寫一行標題，每輪多一次模型呼叫，算進你的用量。關閉時不送出任何東西，目錄顯示原本的提問。",
+      "default": false
+    },
+    "titleModel": {
+      "type": "string",
+      "title": "Model for auto titles / 自動標題用的模型",
+      "description": "An alias or a full model id; used only when auto titles are on. 別名或完整 model id；只有自動標題開啟時才會用到。",
+      "default": "haiku"
+    }
+  }
+}
