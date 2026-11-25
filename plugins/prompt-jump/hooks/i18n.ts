@@ -2,6 +2,7 @@
 // 不碰 $：判斷所需的值由 register.tsx 讀好再傳進來，這樣測試能直接呼叫。
 
 import type { FactsWords } from './facts'
+import type { ReasonWords } from './search'
 import type { TitleWords } from './titles'
 
 export type Lang = 'zh-TW' | 'en'
@@ -12,7 +13,9 @@ export type LangSetting = 'auto' | Lang
 export type Strings = {
   facts: FactsWords
   title: TitleWords
-  chapter: (index: number, gap: string | undefined, count: number) => string
+  reason: ReasonWords
+  /** 清單的分段線：開始時間、跟上一段隔多久（兩者都可能沒有）。 */
+  chapter: (time: string | undefined, gap: string | undefined) => string
   gap: (ms: number) => string
   titleUsage: (tokens: number) => string
 
@@ -23,8 +26,8 @@ export type Strings = {
   statusAll: (total: number, here: number | undefined) => string
   mainScreenNote: string
   noMatch: (query: string) => string
+  noAnswerYet: string
 
-  bandLabel: (at: number | undefined, total: number) => string
   bandPrev: string
   bandNext: string
   bandAnswer: string
@@ -45,6 +48,12 @@ export type Strings = {
   cmdMarks: string
   cmdUnmark: string
   cmdUnmarkHint: string
+  cmdHelp: string
+
+  /** 一般版面捲不動的完整說明（/jump-help，和第一次用指令捲不動時）。 */
+  layoutHelp: string
+  /** 文字清單、選單、提示裡，接在一則後面的符合原因。 */
+  hitReason: (reason: string) => string
 
   paneOpened: string
   paneWaiting: (reason: string) => string
@@ -81,12 +90,20 @@ export type Strings = {
 export const STRINGS: Record<Lang, Strings> = {
   'zh-TW': {
     facts: {
-      file: name => `改 ${name}`,
+      file: names => `改 ${names}`,
       files: n => `改 ${n} 檔`,
-      commands: n => `${n} 指令`,
-      failures: n => `${n} 失敗`,
+      commands: n => `${n} 個指令`,
+      failures: n => `${n} 個失敗`,
       aborted: '中斷',
       running: '進行中…',
+      abortedShort: '中斷',
+      runningShort: '進行中',
+      listJoin: '、',
+    },
+    reason: {
+      inPrompt: excerpt => `提問：${excerpt}`,
+      inAnswer: excerpt => `回答：${excerpt}`,
+      inFile: name => `檔名 ${name}`,
     },
     title: {
       system:
@@ -106,33 +123,32 @@ export const STRINGS: Record<Lang, Strings> = {
           .filter(Boolean)
           .join('\n'),
     },
-    chapter: (index, gap, count) =>
-      `── 第 ${index} 段${gap === undefined ? '' : ` · 停 ${gap}後`} · ${count} 則`,
+    chapter: (time, gap) => [time, gap === undefined ? undefined : `停 ${gap}`].filter(Boolean).join('  '),
     gap: ms => {
       const min = Math.round(ms / 60000)
       return min < 60 ? `${min} 分` : `${Math.floor(min / 60)} 小時 ${min % 60} 分`
     },
     titleUsage: n => `自動標題用量約 ${n} tokens（估計）`,
     paneTitle: '對話目錄',
-    filterPlaceholder: '輸入關鍵字篩選，Enter 跳到最新符合的一則',
+    filterPlaceholder: '篩選：提問、回答、檔名',
     statusEmpty: '還沒有訊息',
-    statusFiltered: (shown, total) => `符合 ${shown} / ${total} 則`,
-    statusAll: (total, here) => `共 ${total} 則${here === undefined ? '' : `，目前在第 ${here} 則`}`,
-    mainScreenNote: '一般版面下對話在終端機自己的捲動區，點了不會捲回去（全螢幕版面才行）',
+    statusFiltered: (shown, total) => `符合 ${shown} / ${total}`,
+    statusAll: (total, here) => (here === undefined ? `${total} 則` : `${here} / ${total}`),
+    mainScreenNote: '一般版面點了不會捲動，/jump-help 看怎麼開全螢幕版面',
     noMatch: query => `沒有符合「${query}」的訊息`,
+    noAnswerYet: '還沒有回答',
 
-    bandLabel: (at, total) => (at === undefined ? `目錄 ${total} 則` : `目錄 ${at}/${total}`),
-    bandPrev: '上一則',
-    bandNext: '下一則',
+    bandPrev: '‹',
+    bandNext: '›',
     bandAnswer: '回答',
     bandList: '清單',
-    bandHint: 'ctrl+x tab 後按字母',
+    bandHint: '指到刻度看那一則，點一下跳過去；ctrl+x tab 後可以用 k j a l 和方向鍵',
     pickerJump: '跳到',
     searchTitle: words => `「${words}」`,
     pickerMarks: '書籤',
     pickerClose: '關閉選單',
 
-    cmdJump: '對話目錄：/jump 開清單，/jump 12 跳到第 12 則，/jump 關鍵字 找訊息',
+    cmdJump: '對話目錄：/jump 開清單，/jump 12 跳到第 12 則，/jump 關鍵字 找提問、回答或檔名',
     cmdJumpHint: '[編號 | 關鍵字 | @書籤 | prev | next | ans]',
     cmdPrev: '跳到上一則你送出的訊息',
     cmdNext: '跳到下一則你送出的訊息',
@@ -142,6 +158,25 @@ export const STRINGS: Record<Lang, Strings> = {
     cmdMarks: '列出書籤，選一個跳回去',
     cmdUnmark: '刪掉書籤',
     cmdUnmarkHint: '<名稱>',
+    cmdHelp: '為什麼點了不會捲動、怎麼開全螢幕版面',
+
+    layoutHelp: [
+      'prompt-jump：為什麼點了不會捲動',
+      '',
+      'Claude Code 有兩種畫面：一般版面和全螢幕版面。一般版面的對話放在終端機自己的捲動區，外掛捲不動，所以點目錄、按上一則下一則都不會跳；提示框上方的刻度列也只在全螢幕版面出現。',
+      '',
+      '開全螢幕版面，三種方法擇一：',
+      '  /tui fullscreen',
+      '      馬上切換。Claude Code 會重開並接回這段對話。',
+      '  在 settings.json 加 "tui": "fullscreen"',
+      '      之後每次開都是全螢幕版面。',
+      '  用 CLAUDE_CODE_NO_FLICKER=1 claude 啟動',
+      '      只影響這次啟動。透過 SSH 連進 Windows、在 tmux -CC 裡時，Claude Code 會自動改用一般版面，這時只有這個方法有效。',
+      '',
+      '沒開全螢幕版面時，/jump 編號、/jump 關鍵字 會印出那一則的全文。',
+      '這段說明只會自動出現一次，之後要看打 /jump-help。',
+    ].join('\n'),
+    hitReason: reason => `（${reason}）`,
 
     paneOpened: '對話目錄已開啟。',
     paneWaiting: reason =>
@@ -161,8 +196,7 @@ export const STRINGS: Record<Lang, Strings> = {
     cantScroll: (label, reason, full) =>
       `${label}\n捲不過去：${reason}${full === undefined ? '' : `\n全文：${full}`}`,
     scrollToast: reason => `捲不回去：${reason}`,
-    mainScreenReason:
-      '一般版面的對話在終端機自己的捲動區，外掛捲不動；要直接跳請用全螢幕版面（CLAUDE_CODE_NO_FLICKER=1 claude）',
+    mainScreenReason: '一般版面的對話在終端機自己的捲動區，外掛捲不動；打 /jump-help 看怎麼開全螢幕版面',
     withWhy: (reason, why) => `${reason}（${why}）`,
     hits: (words, n) => `「${words}」有 ${n} 則符合：`,
     hitsMore: '…（其餘在選單裡）',
@@ -181,12 +215,20 @@ export const STRINGS: Record<Lang, Strings> = {
 
   en: {
     facts: {
-      file: name => `edited ${name}`,
-      files: n => `${n} files`,
+      file: names => `edited ${names}`,
+      files: n => `edited ${n} files`,
       commands: n => `${n} ${n === 1 ? 'command' : 'commands'}`,
       failures: n => `${n} failed`,
       aborted: 'interrupted',
       running: 'running…',
+      abortedShort: 'stopped',
+      runningShort: 'running',
+      listJoin: ', ',
+    },
+    reason: {
+      inPrompt: excerpt => `prompt: ${excerpt}`,
+      inAnswer: excerpt => `answer: ${excerpt}`,
+      inFile: name => `file ${name}`,
     },
     title: {
       system:
@@ -206,35 +248,33 @@ export const STRINGS: Record<Lang, Strings> = {
           .filter(Boolean)
           .join('\n'),
     },
-    chapter: (index, gap, count) =>
-      `── Part ${index}${gap === undefined ? '' : ` · after ${gap} away`} · ${count} ${count === 1 ? 'prompt' : 'prompts'}`,
+    chapter: (time, gap) => [time, gap === undefined ? undefined : `${gap} break`].filter(Boolean).join('  '),
     gap: ms => {
       const min = Math.round(ms / 60000)
       return min < 60 ? `${min} min` : `${Math.floor(min / 60)} h ${min % 60} min`
     },
     titleUsage: n => `Auto titles used about ${n} tokens (estimate)`,
     paneTitle: 'Prompts',
-    filterPlaceholder: 'Type to filter; Enter jumps to the latest match',
+    filterPlaceholder: 'Filter: prompts, answers, file names',
     statusEmpty: 'No prompts yet',
-    statusFiltered: (shown, total) => `${shown} of ${total} match`,
+    statusFiltered: (shown, total) => `${shown} of ${total}`,
     statusAll: (total, here) =>
-      `${total} ${total === 1 ? 'prompt' : 'prompts'}${here === undefined ? '' : `, at #${here}`}`,
-    mainScreenNote:
-      'Main-screen layout: the transcript is in the terminal’s own scrollback, so picking a row cannot scroll there (fullscreen layout can)',
+      here === undefined ? `${total} ${total === 1 ? 'prompt' : 'prompts'}` : `${here} / ${total}`,
+    mainScreenNote: 'Main-screen layout: picking a row cannot scroll. /jump-help shows how to switch',
     noMatch: query => `Nothing matches “${query}”`,
+    noAnswerYet: 'No answer yet',
 
-    bandLabel: (at, total) => (at === undefined ? `Prompts ${total}` : `Prompt ${at}/${total}`),
-    bandPrev: 'Prev',
-    bandNext: 'Next',
+    bandPrev: '‹',
+    bandNext: '›',
     bandAnswer: 'Answer',
     bandList: 'List',
-    bandHint: 'ctrl+x tab, then a letter',
+    bandHint: 'Point at a tick to preview, click to jump; after ctrl+x tab: k j a l and the arrows',
     pickerJump: 'Jump to',
     searchTitle: words => `“${words}”`,
     pickerMarks: 'Bookmarks',
     pickerClose: 'Close',
 
-    cmdJump: 'Prompt index: /jump opens the list, /jump 12 jumps to #12, /jump words finds a prompt',
+    cmdJump: 'Prompt index: /jump opens the list, /jump 12 jumps to #12, /jump words searches prompts, answers and file names',
     cmdJumpHint: '[number | words | @bookmark | prev | next | ans]',
     cmdPrev: 'Jump to the previous prompt you sent',
     cmdNext: 'Jump to the next prompt you sent',
@@ -244,6 +284,25 @@ export const STRINGS: Record<Lang, Strings> = {
     cmdMarks: 'List bookmarks and pick one to jump back',
     cmdUnmark: 'Delete a bookmark',
     cmdUnmarkHint: '<name>',
+    cmdHelp: 'Why picking a prompt does not scroll, and how to turn on the fullscreen layout',
+
+    layoutHelp: [
+      'prompt-jump: why picking a prompt does not scroll',
+      '',
+      'Claude Code draws in one of two layouts: the main screen and the fullscreen layout. On the main screen the transcript lives in your terminal’s own scrollback, which a plugin cannot scroll, so the index, Prev and Next cannot jump there; the tick row above the prompt only shows in the fullscreen layout.',
+      '',
+      'To turn on the fullscreen layout, pick one:',
+      '  /tui fullscreen',
+      '      Switches now. Claude Code restarts and resumes this conversation.',
+      '  Add "tui": "fullscreen" to settings.json',
+      '      Every later session starts fullscreen.',
+      '  Start with CLAUDE_CODE_NO_FLICKER=1 claude',
+      '      This launch only. Over SSH into Windows, and inside tmux -CC, Claude Code falls back to the main screen on its own; there only this one works.',
+      '',
+      'Without the fullscreen layout, /jump <number> and /jump <words> print the full text of that prompt.',
+      'This note shows by itself only once; type /jump-help to see it again.',
+    ].join('\n'),
+    hitReason: reason => ` (${reason})`,
 
     paneOpened: 'Prompt index opened.',
     paneWaiting: reason =>
@@ -263,7 +322,7 @@ export const STRINGS: Record<Lang, Strings> = {
       `${label}\nCould not scroll there: ${reason}${full === undefined ? '' : `\nFull text: ${full}`}`,
     scrollToast: reason => `Could not scroll back: ${reason}`,
     mainScreenReason:
-      'in the main-screen layout the transcript is in the terminal’s own scrollback, which a plugin cannot scroll; to jump, use the fullscreen layout (CLAUDE_CODE_NO_FLICKER=1 claude)',
+      'in the main-screen layout the transcript is in the terminal’s own scrollback, which a plugin cannot scroll; /jump-help shows how to switch to the fullscreen layout',
     withWhy: (reason, why) => `${reason} (${why})`,
     hits: (words, n) => `${n} prompts match “${words}”:`,
     hitsMore: '… (the rest are in the picker)',

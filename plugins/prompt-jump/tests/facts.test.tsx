@@ -55,9 +55,10 @@ test('事實從對話紀錄數：成功改過的檔、指令、失敗', ZH, () =
   expect(book.byPrompt.get('u2')).toEqual({ files: [], commands: 0, failures: 0 })
 })
 
-test('事實那一行：單檔顯示檔名、多檔顯示數量、沒事就空白', ZH, () => {
-  expect(factsLine({ files: ['/w/a.ts'], commands: 2, failures: 1 }, false, zh.facts)).toBe('改 a.ts · 2 指令 · 1 失敗')
-  expect(factsLine({ files: ['/a', '/b'], commands: 0, failures: 0 }, false, zh.facts)).toBe('改 2 檔')
+test('卡片的事實那一行：三個檔以內列檔名、更多顯示數量、沒事就空白', ZH, () => {
+  expect(factsLine({ files: ['/w/a.ts'], commands: 2, failures: 1 }, false, zh.facts)).toBe('改 a.ts  2 個指令  1 個失敗')
+  expect(factsLine({ files: ['/a', '/b'], commands: 0, failures: 0 }, false, zh.facts)).toBe('改 a、b')
+  expect(factsLine({ files: ['/a', '/b', '/c', '/d'], commands: 0, failures: 0 }, false, zh.facts)).toBe('改 4 檔')
   expect(factsLine({ files: [], commands: 0, failures: 0, isAborted: true }, false, zh.facts)).toBe('中斷')
   expect(factsLine({ files: [], commands: 0, failures: 0 }, false, zh.facts)).toBe('')
   expect(factsLine(undefined, true, zh.facts)).toBe('進行中…')
@@ -145,12 +146,14 @@ const turn = async ($: T$, clock: ReturnType<typeof mock.clock>, rows: SessionMe
 }
 
 for (const surface of ['terminal', 'desktop'] as const) {
-  test(`${surface}：每則下面一行事實；沒做事的那則不加行`, ZH, async ($, on) => {
+  test(`${surface}：每列右邊有短標記，卡片寫出改了哪個檔`, ZH, async ($, on) => {
     const { clock } = await start($, on, busyTurn())
     await $.session.start({ cwd: '/w', surface, isInteractive: true })
     await clock.advance(600)
     const ui = await $.ui.mount({ ...PANE, surface })
-    expect(await ui.find({ type: 'Text', text: /改 a\.ts · 2 指令 · 2 失敗/ })).toBeDefined()
+    expect((await ui.find({ key: 'p-u1' }))?.text).toMatch(/±1 \$2 ✗2$/)
+    expect((await ui.find({ key: 'p-u2' }))?.text).not.toMatch(/[±$✗]/)
+    expect(await ui.find({ type: 'Text', text: /改 a\.ts  2 個指令  2 個失敗/ })).toBeDefined()
     await ui.unmount()
   })
 }

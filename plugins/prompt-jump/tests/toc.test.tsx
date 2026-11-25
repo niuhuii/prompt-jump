@@ -81,22 +81,22 @@ test('載入前就有的舊訊息直接從對話紀錄進目錄，順序照紀�
   ])
   // 沒有任何一則被畫過。
   const ui = await $.ui.mount(pane())
-  expect((await ui.find({ key: 'p-u-1' }))?.text).toContain('1 first question')
-  expect((await ui.find({ key: 'p-u-4' }))?.text).toContain('2 second question')
+  expect((await ui.find({ key: 'p-u-1' }))?.text).toContain('1  first question')
+  expect((await ui.find({ key: 'p-u-4' }))?.text).toContain('2  second question')
   expect(await ui.find({ key: 'p-u-3' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: '共 2 則' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '2 則' })).toBeDefined()
   await ui.unmount()
 })
 
-test('之後送出的訊息記下時間，舊訊息不顯示時間', ZH, async ($, on) => {
+test('每列不印時間；舊訊息不知道時間，不畫分段線', ZH, async ($, on) => {
   const rows = [row('u-1', 'old one')]
   const clock = await start($, on, rows)
   rows.push(row('u-2', 'new one'))
   await clock.advance(600)
   const ui = await $.ui.mount(pane())
-  const fresh = (await ui.find({ key: 'p-u-2' }))?.text ?? ''
-  expect(fresh).toMatch(/\d\d:\d\d new one/)
+  expect((await ui.find({ key: 'p-u-2' }))?.text).not.toMatch(/\d\d:\d\d/)
   expect((await ui.find({ key: 'p-u-1' }))?.text).not.toMatch(/\d\d:\d\d/)
+  expect(await ui.find({ type: 'Text', text: /^── / })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -106,7 +106,9 @@ test('新的 session（紀錄一開始是空的）：第一則也記下時間', 
   rows.push(row('u-1', 'first one'))
   await clock.advance(600)
   const ui = await $.ui.mount(pane())
-  expect((await ui.find({ key: 'p-u-1' }))?.text ?? '').toMatch(/\d\d:\d\d first one/)
+  expect((await ui.find({ key: 'p-u-1' }))?.text ?? '').not.toMatch(/\d\d:\d\d/)
+  // 時間在分段線上。
+  expect(await ui.find({ type: 'Text', text: /^── \d\d:\d\d ─+$/ })).toBeDefined()
   await ui.unmount()
 })
 
@@ -116,7 +118,7 @@ test('篩選框打字後只列出符合的', ZH, async ($, on) => {
   await ui.input({ key: 'q', text: 'alpha', kind: 'change' })
   expect(await ui.find({ key: 'p-u-2' })).toBeUndefined()
   expect(await ui.find({ key: 'p-u-3' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '符合 2 / 3 則' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '符合 2 / 3' })).toBeDefined()
   await ui.input({ key: 'q', text: 'zzz', kind: 'change' })
   expect(await ui.find({ type: 'Text', text: /沒有符合「zzz」/ })).toBeDefined()
   await ui.unmount()
@@ -127,8 +129,8 @@ test('長訊息截在窗格寬度內', ZH, async ($, on) => {
   const ui = await $.ui.mount(pane(30))
   const text = (await ui.find({ key: 'p-u-1' }))?.text ?? ''
   expect(text.endsWith('…')).toBe(true)
-  // 按鈕外框四欄，加上內容不超過窗格寬度。
-  expect(widthOf(text) + 4).toBeLessThanOrEqual(30)
+  // 沒有外框，整列不超過窗格寬度。
+  expect(widthOf(text)).toBeLessThanOrEqual(30)
   await ui.unmount()
 })
 
@@ -150,7 +152,10 @@ test('窄畫面窗格放不上去時，輸入框上方有一行目錄', ZH, asyn
       view: {},
     },
   })
-  expect(await band.find({ type: 'Text', text: /目錄 2 則/ })).toBeDefined()
+  // 不知道目前位置時，左邊只寫則數，第二列是用法提示。
+  expect(await band.find({ type: 'Text', text: '2' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: /^指到刻度/ })).toBeDefined()
+  expect(await band.find({ key: 't-u-1' })).toBeDefined()
   expect(await band.find({ key: 'band-prev' })).toBeDefined()
   expect(await band.find({ key: 'band-open' })).toBeDefined()
   await band.unmount()

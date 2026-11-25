@@ -190,7 +190,7 @@ test('上方列：位置、上一則／下一則／回答／清單，按鈕在�
   await start($, on)
   for (const surface of ['terminal', 'desktop'] as const) {
     const band = await $.ui.mount({ ...BAND, surface })
-    expect(await band.find({ type: 'Text', text: /目錄 3 則/ })).toBeDefined()
+    expect(await band.find({ type: 'Text', text: '3' })).toBeDefined()
     await band.press({ key: 'band-prev' })
     await band.unmount()
   }

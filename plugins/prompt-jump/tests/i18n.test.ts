@@ -63,8 +63,14 @@ test('English interface: pane, the row above the prompt and command replies', EN
     requestId: 'band',
     props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 5, bodyColumns: 100, scroll: { offset: 0, bodyRows: 5 }, view: {} },
   })
-  expect(await band.find({ type: 'Text', text: /Prompts 1/ })).toBeDefined()
+  expect((await band.find({ key: 'band-ans' }))?.text).toContain('Answer')
+  expect((await band.find({ key: 'band-open' }))?.text).toContain('List')
+  expect(await band.find({ type: 'Text', text: /^Point at a tick/ })).toBeDefined()
   await band.unmount()
+
+  expect((await $.command.run({ command: 'jump-help', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 80 } })).text).toContain(
+    '/tui fullscreen',
+  )
 
   const run = (command: string, args = '') =>
     $.command.run({ command, args, origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 80 } })

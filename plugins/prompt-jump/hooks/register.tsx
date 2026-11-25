@@ -3,13 +3,16 @@ import type { EngineInterface, Register, SessionMessage } from 'claude-code'
 
 type Engine = EngineInterface
 
-import type { Facts, Mark, PromptEntry } from '../types'
-import { factsLine, groupChapters } from './facts'
+import type { AnswerHead, Facts, Mark, PromptEntry } from '../types'
+import { TICKS, factsLine, factsTail, groupChapters, workLevel } from './facts'
 import { STRINGS, resolveLang, runtimeLocale } from './i18n'
 import type { Strings } from './i18n'
 import { markName, parseJump, positionOf, resolveIndex, stepTarget, topRow } from './nav'
 import type { Seen } from './nav'
-import { cleanPrompt, clip, filterIndexes, hhmm, widthOf } from './toc'
+import { needsNote, reasonText, search } from './search'
+import type { Hit, Searchable } from './search'
+import { planTicks } from './ticks'
+import { cleanPrompt, clip, hhmm, widthOf } from './toc'
 import { cleanTitle, titleRequest } from './titles'
 import { TranscriptIndex } from './transcript'
 
@@ -28,6 +31,8 @@ const activity = atom({ plugin: 'prompt-jump', key: 'activity' } as const, {})
 const isBusy = atom({ plugin: 'prompt-jump', key: 'isBusy' } as const, false)
 const titles = atom({ plugin: 'prompt-jump', key: 'titles' } as const, {})
 const titleTokens = atom({ plugin: 'prompt-jump', key: 'titleTokens' } as const, 0)
+const answers = atom({ plugin: 'prompt-jump', key: 'answers' } as const, {}, { shape: 'answers-1' })
+const focused = atom({ plugin: 'prompt-jump', key: 'focused' } as const, '')
 
 /** 設定選項（plugin.json 的 userConfig）。 */
 type Config = {
@@ -36,7 +41,16 @@ type Config = {
   titles: boolean
   titleModel: string
 }
-let cfg: Config = { autoOpenPane: true, language: 'auto', titles: false, titleModel: 'haiku' }
+let cfg: Config = { autoOpenPane: false, language: 'auto', titles: false, titleModel: 'haiku' }
+
+/** 清單窗格想要的寬度（欄）；使用者拖過的寬度優先。 */
+const PANE_COLUMNS = 44
+/** 目前那一列、預覽與卡片的底色（跟著使用者的佈景主題）。 */
+const SOFT_BG = 'userMessageBackground'
+/** 清單一列和它的卡片共用的 hover 群組名稱。 */
+const rowScope = (id: string) => `pj-row-${id}`.slice(0, 64)
+/** 一般版面捲不動的說明出現過了沒有（跨 session 記在 $.store）。 */
+const HELP_SHOWN = 'layout-help-shown'
 
 const MAX_ENTRIES = 500
 /** 選單最多列幾則。 */
@@ -129,6 +143,15 @@ const syncFacts = async ($: Engine, touched: ReadonlySet<string>, isFull: boolea
     for (const id of isFull ? book.keys() : touched) {
       const f = book.get(id)
       if (f !== undefined) next[id] = copy(f)
+    }
+    return next
+  })
+  const heads = transcript.answers
+  await update($, answers, all => {
+    const next: Record<string, AnswerHead> = isFull ? {} : { ...all }
+    for (const id of isFull ? heads.keys() : touched) {
+      const a = heads.get(id)
+      if (a !== undefined) next[id] = { ...a }
     }
     return next
   })
@@ -255,8 +278,24 @@ const planValue = (value: string): Plan => {
 
 type Outcome = { isMoved: boolean; text: string; reason?: string }
 
-const explain = (deny: string) =>
-  /not scrollable|none scrolls|no-surface/.test(deny) ? s.withWhy(deny, s.mainScreenReason) : deny
+// 畫面最近一次說的版面：true 全螢幕、false 一般版面、undefined 還不知道。
+let isFullscreenNow: boolean | undefined
+
+const isMainScreenDeny = (deny: string) =>
+  /not scrollable|none scrolls|no-surface/.test(deny) || isFullscreenNow === false
+
+const explain = (deny: string) => (isMainScreenDeny(deny) ? s.withWhy(deny, s.mainScreenReason) : deny)
+
+/** 說明還沒自動出現過就記下「出現過了」並回 true；只會回 true 一次（跨 session）。 */
+const takeFirstHelp = async ($: Engine) => {
+  try {
+    if ((await $.store.get(HELP_SHOWN)) === true) return false
+    await $.store.set(HELP_SHOWN, true)
+    return true
+  } catch {
+    return false
+  }
+}
 
 /**
  * 照計畫捲過去。捲動一定是第一個 await：按鈕、選單只有在「回應使用者動作」
@@ -284,23 +323,66 @@ const go = async ($: Engine, plan: Plan): Promise<Outcome> => {
   return { isMoved: true, text: s.jumped(plan.label) }
 }
 
-/** 按鈕、選單：跳不過去時用提示說原因。 */
+/**
+ * 按鈕、選單：跳不過去時用提示說原因。一般版面的提示會帶「/jump-help」；
+ * 一般版面沒有滑鼠，清單只能用鍵盤按，完整說明交給指令那一條路。
+ */
 const press = ($: Engine, plan: Plan) =>
   void go($, plan).then(r => {
     if (!r.isMoved) $.ui.toast(r.reason === undefined ? r.text : s.scrollToast(explain(r.reason)))
   })
 
-/** 指令：跳過去時只跳提示，不在對話底部多加一列（那會把畫面拉回最底下）。 */
-const reply = ($: Engine, outcome: Outcome) => {
+/**
+ * 指令：跳過去時只跳提示，不在對話底部多加一列（那會把畫面拉回最底下）。
+ * 一般版面第一次捲不動（/jump 編號、/prev、/next…）時，回覆後面附上完整說明，只附一次。
+ */
+const reply = async ($: Engine, outcome: Outcome) => {
   if (outcome.isMoved) {
     $.ui.toast(outcome.text)
     return {}
   }
-  return { text: outcome.text }
+  const isFirstHelp = outcome.reason !== undefined && isMainScreenDeny(outcome.reason) && (await takeFirstHelp($))
+  return { text: isFirstHelp ? `${outcome.text}\n\n${s.layoutHelp}` : outcome.text }
+}
+
+/** /prev、/next、/ans：記下版面、讀新紀錄、照計畫跳。 */
+const runPlan = async ($: Engine, isFullscreen: boolean, plan: () => Plan) => {
+  isFullscreenNow = isFullscreen
+  await sync($)
+  return reply($, await go($, plan()))
+}
+
+// ── 搜尋（篩選框、/jump 關鍵字、自動完成共用）────────────────────────
+
+/** 目錄每一則可以被搜的東西：提問（有自動標題時連標題）、回答開頭、改過的檔。 */
+const searchable = (
+  list: readonly PromptEntry[],
+  named: Record<string, string>,
+  heads: ReadonlyMap<string, AnswerHead> | Record<string, AnswerHead>,
+  factsOf: ReadonlyMap<string, Facts> | Record<string, Facts>,
+): Searchable[] => {
+  const get = <T,>(from: ReadonlyMap<string, T> | Record<string, T>, id: string) =>
+    from instanceof Map ? from.get(id) : (from as Record<string, T>)[id]
+  return list.map(one => ({
+    text: named[one.id] === undefined ? one.text : `${named[one.id]} ${one.text}`,
+    answer: get(heads, one.id)?.head,
+    files: get(factsOf, one.id)?.files,
+  }))
+}
+
+/** 指令用的搜尋：直接用記憶體裡的紀錄，不等 state。 */
+const searchEntries = (words: string) =>
+  search(searchable(entries, {}, transcript.answers, transcript.facts.byPrompt), words)
+
+/** 一則加上符合原因（看得出原因時不加）：文字清單、選單、提示用。 */
+const hitLabel = (hit: Hit, width = 60) => {
+  const base = label(hit.index, width)
+  const item = searchable([entries[hit.index]!], {}, transcript.answers, transcript.facts.byPrompt)[0]!
+  return needsNote(hit, base) ? `${base}${s.hitReason(reasonText(hit, item, 40, s.reason))}` : base
 }
 
 const openPane = async ($: Engine) => {
-  const opened = await $.ui.open({ id: PANE, title: s.paneTitle })
+  const opened = await $.ui.open({ id: PANE, title: s.paneTitle, columns: PANE_COLUMNS })
   if (opened.isPlaced) {
     await update($, isPaneWaiting, () => false)
     // 清單長的時候先讓窗格捲到目前那一則（或最後一則）。
@@ -340,6 +422,7 @@ const COMMANDS = () =>
     { name: 'mark', description: s.cmdMark, argumentHint: s.cmdMarkHint },
     { name: 'marks', description: s.cmdMarks, argumentHint: s.cmdMarkHint },
     { name: 'unmark', description: s.cmdUnmark, argumentHint: s.cmdUnmarkHint },
+    { name: 'jump-help', description: s.cmdHelp },
   ] as const
 
 /** 記下一列在畫面上露出的範圍；undefined 代表這個畫面不回報。 */
@@ -420,7 +503,7 @@ const makeTitle = async ($: Engine, job: TitleJob) => {
 
 export const register: Register = (on, options) => {
   cfg = {
-    autoOpenPane: options.autoOpenPane !== false,
+    autoOpenPane: options.autoOpenPane === true,
     language: options.language,
     titles: options.titles === true,
     titleModel:
@@ -452,7 +535,7 @@ export const register: Register = (on, options) => {
       // 名稱被內建指令或別的外掛占用時會被拒，不影響其他指令。
       await $.command.register(command).catch(() => undefined)
     }
-    if (cfg.autoOpenPane) void $.ui.open({ id: PANE, title: s.paneTitle })
+    if (cfg.autoOpenPane) void $.ui.open({ id: PANE, title: s.paneTitle, columns: PANE_COLUMNS })
 
     return next(e)
   })
@@ -481,6 +564,8 @@ export const register: Register = (on, options) => {
       await update($, activity, () => ({}))
       await update($, titles, () => ({}))
       await update($, titleTokens, () => 0)
+      await update($, answers, () => ({}))
+      await update($, focused, () => '')
       titleJobs.length = 0
       sessionId = ''
     }
@@ -513,6 +598,7 @@ export const register: Register = (on, options) => {
     const q = parseJump(e.args)
     await sync($)
     const isFullscreen = e.presentation.isFullscreen !== false
+    isFullscreenNow = e.presentation.isFullscreen
 
     if (q.kind === 'pane') {
       const opened = await openPane($)
@@ -532,20 +618,20 @@ export const register: Register = (on, options) => {
       return reply($, await go($, planIndex(at)))
     }
 
-    const hits = filterIndexes(entries, q.words)
+    const hits = searchEntries(q.words)
     if (hits.length === 0) return { text: s.notFound(q.words) }
-    if (hits.length === 1) return reply($, await go($, planIndex(hits[0]!)))
+    if (hits.length === 1) return reply($, await go($, { ...planIndex(hits[0]!.index), label: hitLabel(hits[0]!) }))
     const shown = hits.slice(-LIST_MAX).reverse()
     if (isFullscreen) {
       await update($, picker, () => ({
         title: s.searchTitle(q.words),
-        options: shown.map(i => ({ value: entries[i]!.id, label: label(i) })),
+        options: shown.map(hit => ({ value: entries[hit.index]!.id, label: hitLabel(hit) })),
       }))
     }
     return {
       text: [
         s.hits(q.words, hits.length),
-        ...shown.slice(0, 10).map(i => `  ${label(i, 70)}`),
+        ...shown.slice(0, 10).map(hit => `  ${hitLabel(hit, 70)}`),
         shown.length > 10 ? `  ${s.hitsMore}` : '',
         isFullscreen ? s.pickerHint : '',
       ]
@@ -554,9 +640,9 @@ export const register: Register = (on, options) => {
     }
   })
 
-  on('command.run', { command: 'prev' }, async $ => (await sync($), reply($, await go($, planStep('prev')))))
-  on('command.run', { command: 'next' }, async $ => (await sync($), reply($, await go($, planStep('next')))))
-  on('command.run', { command: 'ans' }, async $ => (await sync($), reply($, await go($, planAnswer()))))
+  on('command.run', { command: 'prev' }, ($, e) => runPlan($, e.presentation.isFullscreen, () => planStep('prev')))
+  on('command.run', { command: 'next' }, ($, e) => runPlan($, e.presentation.isFullscreen, () => planStep('next')))
+  on('command.run', { command: 'ans' }, ($, e) => runPlan($, e.presentation.isFullscreen, planAnswer))
 
   on('command.run', { command: 'mark' }, async ($, e) => {
     await sync($)
@@ -626,14 +712,32 @@ export const register: Register = (on, options) => {
     // 帶入後整個參數換成編號：token 前面不能還有別的字。
     const typedBefore = e.text.slice(e.text.indexOf(match[1]!), e.start)
     if (typedBefore.trim() !== '') return base
-    const hits = filterIndexes(entries, words).slice(-8).reverse()
+    const hits = searchEntries(words).slice(-8).reverse()
     if (hits.length === 0) return base
     return {
       suggestions: [
         ...base.suggestions,
-        ...hits.map(i => ({ text: String(i + 1), label: label(i, 60) })),
+        ...hits.map(hit => ({ text: String(hit.index + 1), label: hitLabel(hit, 60) })),
       ],
     }
+  })
+
+  on('command.run', { command: 'jump-help' }, async () => ({ text: s.layoutHelp }))
+
+  // 鍵盤焦點移到刻度或清單的某一列：預覽跟著換成那一則。沒有指定 plugin 的
+  // ui.focus hook 只聽得到自己畫的元素和引擎自己的停駐點（那時 element 沒有值）。
+  on('ui.focus', async ($, e, next) => {
+    // 引擎填 element；$.ui.focus({ requestId, key }) 直接傳下來時是 key。
+    const element = e.element ?? (e as { key?: string }).key ?? ''
+    const id = /^[tp]-(.+)$/.exec(element)?.[1] ?? ''
+    await update($, focused, was => (was === id ? was : id))
+    return next(e)
+  })
+
+  // 送出新的提問時，焦點已回到提示框：預覽回到目前那一則。
+  on('prompt.submit', async ($, e, next) => {
+    await update($, focused, was => (was === '' ? was : ''))
+    return next(e)
   })
 
   // 記下畫面認得的事：哪些列不是使用者自己送的、每一列此刻在不在畫面裡。
@@ -678,68 +782,171 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  // ── 清單窗格（按 l 或 /jump 打開）──────────────────────────────────
+  // 一則一列：左邊色條與編號、提問、右邊短標記（±改檔 $指令 ✗失敗）。目前那一則
+  // 有色條、底色、粗體。時間只出現在分段線上。滑鼠指到或鍵盤移到某一列，下面
+  // （太靠底時改在上面）浮出一張卡片：提問、回答開頭、這輪做了什麼。
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Button, Input, Text } = $.ui.resolve(e)
+    if (e.viewport?.isFullscreen !== undefined) isFullscreenNow = e.viewport.isFullscreen
     const list = await read($, prompts)
     const stamps = await read($, times)
     const q = await read($, query)
     const here = await read($, current)
-    const shown = filterIndexes(list, q)
-    const hereAt = list.findIndex(one => one.id === here)
     const factsOf = await read($, facts)
     const lastAt = await read($, activity)
     const isRunning = await read($, isBusy)
+    const heads = await read($, answers)
+    const focusId = await read($, focused)
     const named = cfg.titles ? await read($, titles) : {}
     const spent = cfg.titles ? await read($, titleTokens) : 0
-
-    // 每列：記號、編號、時間、內容。Button 在終端機會加「[ 」「 ]」四欄。
-    const numCols = String(Math.max(1, list.length)).length
-    const hasTimes = shown.some(i => stamps[list[i]!.id] !== undefined)
-    const prefixCols = 2 + numCols + 1 + (hasTimes ? 6 : 0)
-    const textCols = Math.max(8, e.props.bodyColumns - 4 - prefixCols)
+    const W = Math.max(16, e.props.bodyColumns)
+    const isFiltering = q.trim() !== ''
+    const items = searchable(list, named, heads, factsOf)
+    const hits = search(items, q)
+    const hitOf = new Map(hits.map(hit => [hit.index, hit]))
+    const hereAt = list.findIndex(one => one.id === here)
 
     const status =
       list.length === 0
         ? s.statusEmpty
-        : q.trim() !== ''
-          ? s.statusFiltered(shown.length, list.length)
+        : isFiltering
+          ? s.statusFiltered(hits.length, list.length)
           : s.statusAll(list.length, hereAt >= 0 ? hereAt + 1 : undefined)
 
-    // 每則：一顆按鈕（記號、編號、時間、標題或提問），下面一行灰字的事實（有才顯示）。
-    // 事實那行對齊到內容開頭：按鈕外框「[ 」兩欄，加記號、編號。
-    const factsIndent = 2 + 2 + numCols + 1
-    const row = (i: number) => {
+    const numCols = String(Math.max(1, list.length)).length
+    // 色條一欄、編號、兩格空白。
+    const prefix = 1 + numCols + 2
+    const { offset, bodyRows } = e.props.scroll
+    // 內容第幾列（卡片太靠底時改畫在上面要用）。
+    let y = 0
+
+    // 卡片全部畫在清單最後面：absolute 的 Box 只蓋得住畫在它前面的東西，放在列裡
+    // 會被下面幾列蓋掉。每張卡片跟它那一列用同一個 hover 群組連起來。
+    const cards: unknown[] = []
+
+    /** 卡片：粗體提問兩行、灰字回答開頭兩行、這輪做了什麼一行。top 是清單內容的第幾列。 */
+    const card = (i: number, rowY: number, isShown: boolean) => {
       const one = list[i]!
-      const isHere = one.id === here
-      const at = stamps[one.id]
-      const num = String(i + 1).padStart(numCols, ' ')
       const f = factsOf[one.id]
-      const line = factsLine(f, isRunning && i === list.length - 1, s.facts)
+      const inner = Math.max(8, W - 3 - 4)
+      const lines = (text: string, max: number) => Math.min(max, Math.max(1, Math.ceil(widthOf(text) / inner)))
+      const title = `${i + 1}  ${named[one.id] ?? one.text}`
+      const answer = heads[one.id]?.head ?? (isRunning && i === list.length - 1 ? s.facts.running : s.noAnswerYet)
+      const done = factsLine(f, false, s.facts)
+      // 已經顯示的（鍵盤焦點那一列）不能再掛 hover 顯示，引擎會拒絕整棵樹。
+      const display = isShown ? ('flex' as const) : ('none' as const)
+      const hover = isShown ? undefined : { scope: rowScope(one.id), display: 'flex' as const }
+      // 窗格太矮（提示框上方那種）放不下整張卡片：改成那一列底下一行灰字的回答開頭。
+      if (bodyRows < 12) {
+        return (
+          <Box
+            key={`k-${one.id}`}
+            position="absolute"
+            top={rowY + 1}
+            left={prefix}
+            width={W - prefix}
+            backgroundColor={SOFT_BG}
+            display={display}
+            hover={hover}
+          >
+            <Text dimColor>{clip(answer, W - prefix)}</Text>
+          </Box>
+        )
+      }
+      const height = 2 + lines(title, 2) + lines(answer, 2) + (done === '' ? 0 : 1)
+      const isBelow = rowY - offset + 1 + height <= bodyRows || rowY - offset - height < 0
       return (
-        <Box key={`r-${one.id}`} flexDirection="column">
-          <Button key={`p-${one.id}`} onPress={() => press($, planValue(one.id))}>
-            <Text color="cyan">{isHere ? '▶ ' : '  '}</Text>
-            <Text dimColor={!isHere} bold={isHere}>
-              {num}
-            </Text>{' '}
-            {hasTimes && <Text dimColor>{at === undefined ? '     ' : hhmm(at)} </Text>}
-            <Text bold={isHere}>{clip(named[one.id] ?? one.text, textCols)}</Text>
-          </Button>
-          {line !== '' && (
-            <Text key={`f-${one.id}`} dimColor color={f !== undefined && f.failures > 0 ? 'red' : undefined}>
-              {' '.repeat(factsIndent)}
-              {clip(line, Math.max(8, e.props.bodyColumns - factsIndent))}
+        <Box
+          key={`k-${one.id}`}
+          position="absolute"
+          top={isBelow ? rowY + 1 : rowY - height}
+          left={2}
+          width={W - 3}
+          flexDirection="column"
+          borderStyle="round"
+          borderDimColor
+          backgroundColor={SOFT_BG}
+          paddingX={1}
+          // 跟那一列同一個 hover 群組：指到那一列就顯示。
+          display={display}
+          hover={hover}
+        >
+          <Text bold maxLines={2}>
+            {title}
+          </Text>
+          <Text dimColor maxLines={2}>
+            {answer}
+          </Text>
+          {done !== '' && (
+            <Text dimColor color={f !== undefined && f.failures > 0 ? 'red' : undefined}>
+              {clip(done, inner)}
             </Text>
           )}
         </Box>
       )
     }
-    // 篩選時不分段；兩則之間停超過 15 分鐘就開新的一段（只有一段時不顯示段落標題）。
-    const chapters =
-      q.trim() === ''
-        ? groupChapters(shown, i => ({ start: stamps[list[i]!.id], end: lastAt[list[i]!.id] }))
-        : [{ index: 1, items: shown }]
 
+    const row = (i: number) => {
+      const one = list[i]!
+      const isHere = one.id === here
+      const num = String(i + 1).padStart(numCols, ' ')
+      const tail = factsTail(factsOf[one.id], isRunning && i === list.length - 1, s.facts)
+      const tailCols = tail.reduce((n, part) => n + widthOf(part.text) + 1, 0)
+      const room = Math.max(6, W - prefix - tailCols - 1)
+      const shownText = clip(named[one.id] ?? one.text, room)
+      const pad = Math.max(1, W - prefix - widthOf(shownText) - tailCols)
+      const hit = hitOf.get(i)
+      const note = isFiltering && hit !== undefined && needsNote(hit, shownText)
+      const rowY = y
+      y += note ? 2 : 1
+      cards.push(card(i, rowY, focusId === one.id))
+      return (
+        <Box key={`r-${one.id}`} flexDirection="column" hover={{ scope: rowScope(one.id) }}>
+          <Box backgroundColor={isHere ? SOFT_BG : undefined}>
+            <Button key={`p-${one.id}`} plain onPress={() => press($, planValue(one.id))}>
+              <Text color="cyan">{isHere ? '▌' : ' '}</Text>
+              <Text color={isHere ? 'cyan' : undefined} dimColor={!isHere} bold={isHere}>
+                {num}
+              </Text>
+              <Text>{'  '}</Text>
+              <Text bold={isHere}>{shownText}</Text>
+              {tail.length > 0 && <Text>{' '.repeat(pad)}</Text>}
+              {tail.map((part, k) => (
+                <Text key={`t${k}`} dimColor={!part.isFailure} color={part.isFailure ? 'red' : undefined}>
+                  {k === 0 ? part.text : ` ${part.text}`}
+                </Text>
+              ))}
+            </Button>
+          </Box>
+          {note && (
+            <Text dimColor>
+              {' '.repeat(prefix)}
+              {reasonText(hit, items[i]!, W - prefix, s.reason)}
+            </Text>
+          )}
+        </Box>
+      )
+    }
+
+    const shown = hits.map(hit => hit.index)
+    // 篩選時不分段；兩則之間停超過 15 分鐘就開新的一段，分段線上寫開始時間和停了多久。
+    const chapters = isFiltering
+      ? [{ index: 1, items: shown, gapMs: undefined }]
+      : groupChapters(shown, i => ({ start: stamps[list[i]!.id], end: lastAt[list[i]!.id] }))
+    const head = (ch: { gapMs?: number; items: number[] }) => {
+      if (isFiltering) return undefined
+      const first = ch.items[0]
+      const at = first === undefined ? undefined : stamps[list[first]!.id]
+      const text = s.chapter(at === undefined ? undefined : hhmm(at), ch.gapMs === undefined ? undefined : s.gap(ch.gapMs))
+      return text === '' ? undefined : clip(`── ${text} ${'─'.repeat(Math.max(0, W - widthOf(text) - 4))}`, W)
+    }
+
+    // 輸入框一列、狀態一列。
+    y = 2
+    const isMainScreen = e.viewport?.isFullscreen === false
+    if (isMainScreen) y++
+    if (list.length > 0 && shown.length === 0) y++
     return (
       <Box flexDirection="column">
         <Input
@@ -749,42 +956,43 @@ export const register: Register = (on, options) => {
           onInput={value => void update($, query, () => value)}
           onSubmit={value => {
             // Enter：跳到最新一則符合的，並清掉篩選（輸入框送出後本來就會清空）。
-            const hit = filterIndexes(list, value).at(-1)
-            if (hit !== undefined) press($, planValue(list[hit]!.id))
+            const hit = search(items, value).at(-1)
+            if (hit !== undefined) press($, planValue(list[hit.index]!.id))
             void update($, query, () => '')
           }}
         />
         <Text dimColor>{status}</Text>
-        {e.viewport?.isFullscreen === false && <Text color="yellow">{s.mainScreenNote}</Text>}
+        {isMainScreen && <Text color="yellow">{clip(s.mainScreenNote, W)}</Text>}
         {list.length > 0 && shown.length === 0 && <Text dimColor>{s.noMatch(q.trim())}</Text>}
-        {chapters.map(ch => (
-          <Box key={`c-${ch.index}`} flexDirection="column">
-            {chapters.length > 1 && (
-              <Text bold color="cyan">
-                {clip(
-                  s.chapter(ch.index, ch.gapMs === undefined ? undefined : s.gap(ch.gapMs), ch.items.length),
-                  e.props.bodyColumns,
-                )}
-              </Text>
-            )}
-            {ch.items.map(row)}
-          </Box>
-        ))}
-        {spent > 0 && <Text dimColor>{clip(s.titleUsage(spent), e.props.bodyColumns)}</Text>}
+        {chapters.map((ch, k) => {
+          const line = head(ch)
+          if (line !== undefined) y++
+          return (
+            <Box key={`c-${k}`} flexDirection="column">
+              {line !== undefined && <Text dimColor>{line}</Text>}
+              {ch.items.map(row)}
+            </Box>
+          )
+        })}
+        {spent > 0 && <Text dimColor>{clip(s.titleUsage(spent), W)}</Text>}
+        {cards as never}
       </Box>
     )
   })
 
-  // 提示框上方一列：目前第幾則、上一則／下一則／回答開頭／清單；
-  // /jump、/marks 叫出的選單也畫在這裡。ctrl+x tab 移過來後 k／j／a／l 是快捷鍵。
-  // 一般版面捲不動對話，這一列沒有用，不占位置。
+  // ── 提示框上方：刻度列＋預覽列 ─────────────────────────────────────
+  // 第一列：目前第幾則、每則一根刻度（高度＝工作量，有失敗的那輪紅色，目前那一則
+  // 亮青色，停超過 15 分鐘空一格）、k ‹ j › a 回答 l 清單。第二列：預覽，平常是
+  // 目前那一則，滑鼠指到哪根刻度（或鍵盤移到哪根）就換成那一則。
+  // /jump、/marks 叫出的選單也畫在這裡。一般版面捲不動對話，這兩列不占位置。
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.viewport?.isFullscreen !== undefined) isFullscreenNow = e.viewport.isFullscreen
     if (e.props.hasSurvey || e.viewport?.isFullscreen === false) return next(e)
     const list = await read($, prompts)
     const menu = await read($, picker)
     if (list.length === 0 && !menu) return next(e)
     const { Box, Button, Select, Text } = $.ui.resolve(e)
-    const width = Math.max(20, e.props.bodyColumns)
+    const W = Math.max(20, e.props.bodyColumns)
 
     if (menu) {
       return (
@@ -796,7 +1004,7 @@ export const register: Register = (on, options) => {
             autoFocus
             options={menu.options.map(one => ({
               value: one.value,
-              label: clip(one.label, width - widthOf(menu.title) - 6),
+              label: clip(one.label, W - widthOf(menu.title) - 6),
             }))}
             onSelect={value => {
               press($, planValue(value))
@@ -811,53 +1019,166 @@ export const register: Register = (on, options) => {
     }
 
     const here = await read($, current)
+    const focusId = await read($, focused)
+    const factsOf = await read($, facts)
+    const heads = await read($, answers)
+    const stamps = await read($, times)
+    const lastAt = await read($, activity)
+    const isRunning = await read($, isBusy)
+    const named = cfg.titles ? await read($, titles) : {}
+    const n = list.length
     const at = list.findIndex(one => one.id === here)
-    // 不加框的按鈕畫成「k: 上一則」：快捷鍵、冒號、空白、文字，加上按鈕之間的一格。
-    const buttons = [s.bandPrev, s.bandNext, s.bandAnswer, s.bandList]
-    const buttonCols = buttons.reduce((n, b) => n + widthOf(b) + 4, 0)
-    // 引擎在這一列右邊另有收合鈕（約 4 欄）。
-    const free = width - buttonCols - 5
-    const long = s.bandLabel(at < 0 ? undefined : at + 1, list.length)
-    // 太窄時只留「8/12」，不讓標籤被擠成兩行。
-    const tag = widthOf(long) <= free ? long : at < 0 ? String(list.length) : `${at + 1}/${list.length}`
-    const hintCols = widthOf(s.bandHint) + 2
-    const isHintShown = free - widthOf(tag) - hintCols > 12
-    const room = free - widthOf(tag) - (isHintShown ? hintCols : 0) - 1
+    const focusAt = list.findIndex(one => one.id === focusId)
+    const hasPreviewRow = e.props.maxRows >= 2
 
-    return (
-      <Box flexDirection="row">
-        {/* 字尾的空白在窄畫面會被吃掉，間隔一律用獨立的一格。 */}
-        <Box flexShrink={0}>
-          <Text dimColor>{tag}</Text>
+    // 左邊：「8/12」或（不知道目前位置時）「12」。
+    const numW = String(n).length
+    const tagCols = at >= 0 ? numW + 1 + numW : numW
+    // 右邊的按鈕：不加框的按鈕畫成「k: ‹」，按鈕之間空兩格。
+    const buttons = [
+      { key: 'band-prev', hotkey: 'k', text: s.bandPrev, onPress: () => press($, planStep('prev')) },
+      { key: 'band-next', hotkey: 'j', text: s.bandNext, onPress: () => press($, planStep('next')) },
+      { key: 'band-ans', hotkey: 'a', text: s.bandAnswer, onPress: () => press($, planAnswer()) },
+      {
+        key: 'band-open',
+        hotkey: 'l',
+        text: s.bandList,
+        onPress: () =>
+          void openPane($).then(opened => (opened.isPlaced ? undefined : update($, picker, () => recentPicker()))),
+      },
+    ]
+    const buttonCols = (shown: typeof buttons) => shown.reduce((m, b) => m + widthOf(b.text) + 3 + 2, 0)
+    // 太窄時先拿掉「回答」「清單」，留住刻度。
+    const kept = W - tagCols - 2 - buttonCols(buttons) >= 12 ? buttons : buttons.slice(0, 2)
+    const tickRoom = Math.max(0, W - tagCols - 2 - buttonCols(kept))
+
+    const isGap = (i: number) => {
+      const start = stamps[list[i]!.id]
+      const prev = list[i - 1]
+      const end = prev === undefined ? undefined : (lastAt[prev.id] ?? stamps[prev.id])
+      return start !== undefined && end !== undefined && start - end > 15 * 60 * 1000
+    }
+    const plan = planTicks(n, at, tickRoom, isGap)
+    const tickLeft = tagCols + 2
+
+    /** 預覽列的內容：編號、粗體提問、灰字回答開頭。 */
+    const preview = (i: number) => {
+      const one = list[i]!
+      const isHere = i === at
+      const num = String(i + 1).padStart(numW)
+      const answer = heads[one.id]?.head ?? (isRunning && i === n - 1 ? s.facts.running : s.noAnswerYet)
+      const text = named[one.id] ?? one.text
+      const afterNum = W - numW - 2
+      const qCols = Math.min(widthOf(text), Math.max(10, Math.floor(afterNum * 0.45)))
+      const aCols = afterNum - qCols - 3
+      return (
+        <Box flexDirection="row">
+          <Text color={isHere ? 'cyan' : undefined} dimColor={!isHere} bold={isHere}>
+            {num}
+          </Text>
+          <Box width={2} flexShrink={0} />
+          <Text bold>{clip(text, qCols)}</Text>
+          {aCols > 6 && <Box width={3} flexShrink={0} />}
+          {aCols > 6 && <Text dimColor>{clip(answer, aCols)}</Text>}
         </Box>
-        <Text> </Text>
-        {at >= 0 && room > 6 && <Text>{clip(list[at]!.text, room)}</Text>}
-        {at >= 0 && room > 6 && <Text> </Text>}
-        <Button key="band-prev" plain hotkey="k" onPress={() => press($, planStep('prev'))}>
-          {s.bandPrev}
-        </Button>
-        <Text> </Text>
-        <Button key="band-next" plain hotkey="j" onPress={() => press($, planStep('next'))}>
-          {s.bandNext}
-        </Button>
-        <Text> </Text>
-        <Button key="band-ans" plain hotkey="a" onPress={() => press($, planAnswer())}>
-          {s.bandAnswer}
-        </Button>
-        <Text> </Text>
-        <Button
-          key="band-open"
-          plain
-          hotkey="l"
-          onPress={() =>
-            void openPane($).then(opened =>
-              opened.isPlaced ? undefined : update($, picker, () => recentPicker()),
-            )
-          }
-        >
-          {s.bandList}
-        </Button>
-        {isHintShown && <Text dimColor>  {s.bandHint}</Text>}
+      )
+    }
+
+    const ticks: unknown[] = []
+    let col = 0
+    if (plan.before > 0) {
+      ticks.push(
+        <Text key="more-l" dimColor>
+          {`‹${plan.before}`}
+        </Text>,
+      )
+      col = String(plan.before).length + 1
+    }
+    for (const item of plan.items) {
+      if (item.col > col) ticks.push(<Box key={`g${item.index}`} width={item.col - col} flexShrink={0} />)
+      const one = list[item.index]!
+      const f = factsOf[one.id]
+      const isHere = item.index === at
+      const isFailed = f !== undefined && f.failures > 0
+      const glyph = TICKS[workLevel(f, heads[one.id]?.size)]!
+      ticks.push(
+        <Box key={`tb-${one.id}`} width={plan.per} flexShrink={0}>
+          <Button key={`t-${one.id}`} plain onPress={() => press($, planValue(one.id))}>
+            <Text color={isHere ? 'cyan' : isFailed ? 'red' : undefined} dimColor={!isHere && !isFailed} bold={isHere}>
+              {glyph}
+            </Text>
+          </Button>
+          {hasPreviewRow && (
+            <Box
+              position="absolute"
+              top={1}
+              left={-(tickLeft + item.col)}
+              width={W}
+              backgroundColor={SOFT_BG}
+              display="none"
+              hover={{ display: 'flex' }}
+            >
+              {preview(item.index)}
+            </Box>
+          )}
+        </Box>,
+      )
+      col = item.col + plan.per
+    }
+    if (plan.after > 0) {
+      if (plan.per === 1) ticks.push(<Box key="more-gap" width={1} flexShrink={0} />)
+      ticks.push(
+        <Text key="more-r" dimColor>
+          {`${plan.after}›`}
+        </Text>,
+      )
+    }
+
+    const shownAt = focusAt >= 0 ? focusAt : at
+    const tickRow = (
+      <Box key="ticks" flexDirection="row">
+        <Box flexShrink={0}>
+          {at >= 0 ? (
+            <Text>
+              <Text color="cyan" bold>
+                {String(at + 1).padStart(numW)}
+              </Text>
+              <Text dimColor>{`/${n}`}</Text>
+            </Text>
+          ) : (
+            <Text dimColor>{String(n)}</Text>
+          )}
+        </Box>
+        <Box width={2} flexShrink={0} />
+        <Box width={tickRoom} flexShrink={0} flexDirection="row">
+          {ticks as never}
+        </Box>
+        {kept.map((b, k) => (
+          <Box key={`w-${b.key}`} flexDirection="row" flexShrink={0}>
+            <Box width={2} flexShrink={0} />
+            <Button key={b.key} plain hotkey={b.hotkey} onPress={b.onPress}>
+              {b.text}
+            </Button>
+            {k === kept.length - 1 && <Box width={1} flexShrink={0} />}
+          </Box>
+        ))}
+      </Box>
+    )
+    const previewRow = !hasPreviewRow ? undefined : shownAt >= 0 ? (
+      <Box key="pv" flexDirection="row" backgroundColor={focusAt >= 0 ? SOFT_BG : undefined}>
+        {preview(shownAt)}
+      </Box>
+    ) : (
+      <Text key="pv" dimColor>
+        {clip(s.bandHint, W)}
+      </Text>
+    )
+    // 指到刻度時浮出的預覽（absolute）只蓋得住畫在它前面的東西：預覽列先畫，
+    // 刻度列後畫；用 column-reverse 讓刻度列仍在上面。
+    return (
+      <Box flexDirection="column-reverse">
+        {previewRow}
+        {tickRow}
       </Box>
     )
   })

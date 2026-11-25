@@ -1,6 +1,6 @@
 {
   "name": "prompt-jump",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "MIT",
   "description": "Jump back to any prompt you sent in a long Claude Code session: a prompt index pane, /prev /next /jump, bookmarks. 對話目錄：列出你問過的每一則，點一下或打 /jump 就捲回那裡。",
   "author": {
@@ -23,8 +23,8 @@
     "autoOpenPane": {
       "type": "boolean",
       "title": "Open the pane at start / 啟動時自動打開窗格",
-      "description": "Open the prompt index beside the chat when a session starts (it shows once the terminal is wide enough). Off: open it with /jump. 每次開始對話就打開對話目錄（終端機夠寬時才會顯示）；關掉則用 /jump 叫出。",
-      "default": true
+      "description": "Open the prompt list beside the chat when a session starts (it shows once the terminal is wide enough). Off (the default since 0.3.0): the tick row above the prompt is always there; press l on it or type /jump to open the list. 每次開始對話就打開清單（終端機夠寬時才會顯示）。關（0.3.0 起的預設）：提示框上方的刻度列一直都在，按 l 或打 /jump 再打開清單。",
+      "default": false
     },
     "language": {
       "type": "string",

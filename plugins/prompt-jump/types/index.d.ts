@@ -22,6 +22,9 @@ export type Facts = {
   isAborted?: boolean
 }
 
+/** 一則的回答：開頭幾百字（預覽與搜尋用）與全部有幾個字（刻度高度用）。 */
+export type AnswerHead = { head: string; size: number }
+
 declare module 'claude-code' {
   interface PluginState {
     'prompt-jump': {
@@ -46,6 +49,10 @@ declare module 'claude-code' {
       titles: Record<string, string>
       /** 自動標題這個 session 一共用掉的 token（估計）。 */
       titleTokens: number
+      /** 每一則回答的開頭與長度，以提問的列 id 為 key。 */
+      answers: Shaped<Record<string, AnswerHead>>
+      /** 鍵盤焦點停在哪一則（刻度或清單那一列），提問的列 id；沒有是空字串。 */
+      focused: string
     }
   }
 }

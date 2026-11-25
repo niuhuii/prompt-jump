@@ -4,23 +4,19 @@
 
 **Jump back to any prompt you sent in a long Claude Code session, instead of scrolling up and up.**
 
-A list of your prompts sits beside the chat. Click one, or type `/jump 3`, `/prev`, `/next`, and the conversation scrolls back to it.
+Above the prompt box, one tick per prompt shows the whole conversation at a glance. Point at a tick to preview that prompt and the start of its answer; click it, or type `/jump 3`, `/prev`, `/next`, and the conversation scrolls back to it.
 
 ```text
- …                                                         │ Prompts                              ✕
-❯ Add a subtract function to math.js                       │ Type to filter; Enter jumps to the …
-● Update(math.js)                                          │ 8 prompts, at #8
-● Added subtract(a, b) next to add.                        │ [   1 10:00 Fix the add function … ]
-                                                           │       edited math.js
-                                                           │ [   2 10:00 Run the tests and report ]
-                                                           │       1 command · 1 failed
-                                                           │ [   3 10:01 What does math.js do?   ]
-                                                           │   …
-                                                           │ [ ▶ 8 10:22 Add a subtract function … ]
-                                                           │       edited math.js
-Prompt 8/8 Add a subtract function to … k: Prev j: Next a: Answer l: List
+❯ Check the phone layout one last time
+● Update(src\layout\Footer.tsx)
+  Ran 2 shell commands
+● All three main pages look right on phones; only the footer text was small, now larger
+10/12  ▄ ▅ ▄ ▅ ▄ ▄ ▅ ▃ ▄ ▅ ▄ ▄                                 k: ‹  j: ›  a: Answer  l: List
+ 3  Why am I logged out again after a refresh   The token expires and is never renewed: the…
 ❯
 ```
+
+The first row: where you are (`10/12`), one tick per prompt, and four buttons. A tick is taller when that turn did more work, red when a tool call failed, and cyan for where you are. The second row previews the prompt you point at (here #3), or where you are when you point at nothing.
 
 ## Install
 
@@ -38,39 +34,46 @@ From a shell instead:
 claude plugin install prompt-jump --marketplace niuhuii/prompt-jump
 ```
 
-**Turn on the fullscreen layout** to make jumping work (see [Known limitations](#known-limitations)):
+**Turn on the fullscreen layout** to make jumping work (why: [Known limitations](#known-limitations)). Pick one:
 
-```
-CLAUDE_CODE_NO_FLICKER=1 claude
-```
+| How | Effect |
+| --- | --- |
+| `/tui fullscreen` | Switches now; Claude Code restarts and resumes the conversation |
+| `"tui": "fullscreen"` in `settings.json` | Every later session starts fullscreen |
+| `CLAUDE_CODE_NO_FLICKER=1 claude` | This launch only. Over SSH into Windows and inside `tmux -CC`, Claude Code falls back to the main screen on its own; there only this one works |
+
+`/jump-help` shows the same list inside Claude Code.
 
 The same repository has a second, optional plugin, [compact-edits](#compact-edits-optional), installed on its own.
 
 ## What it does
 
-- **Prompt list.** Every message you type is listed in a pane beside the chat, numbered, with the time you sent it. Prompts already in the conversation when the plugin loads (for example after `--resume`) are listed right away. Messages that are not yours (background task notices, slash commands) are left out.
-- **Jump back.** Click a row, or type a number or words, and the conversation scrolls so that prompt is at the top. The `▶` marks the prompt at the top of the screen now.
-- **What each turn did.** A grey line under a row counts what happened after that prompt: `edited math.js · 2 commands · 1 failed`. It is counted from the conversation itself, with no model call. Rows where nothing was edited or run have no extra line.
-- **Filter.** Type in the box at the top of the pane to narrow the list; Enter jumps to the latest match.
-- **Row above the prompt.** Where you are (`Prompt 3/8`) and buttons for previous, next, the start of the latest answer, and the list.
+- **Tick row above the prompt.** One tick per prompt you typed, in order, with a gap where you paused more than 15 minutes. Height is the work done in that turn (files edited, commands run, length of the answer), red marks a turn where a tool call failed, cyan marks where you are. Messages that are not yours (background task notices, slash commands) are left out; prompts already in the conversation when the plugin loads (for example after `--resume`) are there right away. When there are more ticks than room, the row shows the part around where you are and counts the rest (`‹24`, `23›`).
+- **Preview.** Point at a tick, or move to it with the keyboard, and the second row shows that prompt and the start of its answer.
+- **Jump back.** Click a tick, or use `k` / `j` (previous / next), `a` (start of the latest answer), and the conversation scrolls so that prompt is at the top.
+- **List.** `l` or `/jump` opens the full list: one row per prompt, the number, the prompt, and short marks on the right: `±2` files edited, `$4` commands run, `✗1` failed. The row where you are has a bar, a shaded background and bold text. Point at a row for a card with the prompt, the start of the answer and what the turn did. Times appear on the section lines between pauses (`── 10:05  20 min break ───`), not on every row.
+- **Search prompts, answers and file names.** The filter box in the list and `/jump words` match the prompt, the start of that turn's answer, and the names of the files it edited, so `/jump tiles.tsx` finds the turn that changed that file. When a row matches on something you cannot see in it, a grey line says why: `file tiles.tsx`, `answer: …token expired…`, or the part of the prompt that was cut off.
 - **Bookmarks.** `/mark name` remembers the spot at the top of the screen; `/jump @name` comes back to it.
 - **English and Traditional Chinese**, following your settings.
+
+Everything is counted from the conversation itself, with no model call (except the optional auto titles below).
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `/jump` | Open the prompt list |
+| `/jump` | Open the list |
 | `/jump 12` · `/jump -1` | Jump to #12 · to the last prompt |
-| `/jump login page` | Jump to the prompt that matches; with several matches, a picker appears above the prompt box |
+| `/jump login page` · `/jump tiles.tsx` | Jump to the prompt whose text, answer or edited files match; with several matches, a picker appears above the prompt box, each entry saying why it matched |
 | `/prev` · `/next` | Previous / next prompt (also `/jump prev`, `/jump next`) |
 | `/ans` | The start of the latest answer |
 | `/mark [name]` · `/jump @name` | Bookmark where you are · jump back to it |
 | `/marks` · `/unmark name` | List bookmarks (with a picker) · delete one |
+| `/jump-help` | Why jumping does not scroll on the main screen, and how to switch |
 
 While you type `/jump words`, matching prompts appear as suggestions; Tab fills in the number.
 
-To use the row above the prompt from the keyboard, press `ctrl+x tab` to move into it, then a letter: `k` previous, `j` next, `a` answer, `l` list (or Enter on a button). `Esc` goes back to the prompt box. You can also click the buttons.
+To use the tick row from the keyboard, press `ctrl+x tab` to move into it. The arrows and Tab walk the ticks (the preview follows), Enter jumps, and the letters press the buttons: `k` previous, `j` next, `a` answer, `l` list. `Esc` goes back to the prompt box.
 
 ## Settings
 
@@ -78,7 +81,7 @@ Set on the screen shown at install; change them later in `/config`.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `autoOpenPane` | on | Open the list when a session starts. Off: open it with `/jump`. |
+| `autoOpenPane` | **off** (was on before 0.3.0) | Open the list beside the chat when a session starts. Off: the tick row is always there; open the list with `l` or `/jump`. |
 | `language` | `auto` | `auto`, `zh-TW` or `en`. `auto` follows Claude Code's `language` setting, then your system locale, and falls back to English. |
 | `titles` | **off** | Auto titles; see below. |
 | `titleModel` | `haiku` | The model used for auto titles. |
@@ -94,12 +97,13 @@ With `titles` on, after each turn the plugin asks a model for a one-line title f
 
 ## Known limitations
 
-- **Scrolling back works only in the fullscreen layout.** In Claude Code's default layout the conversation lives in your terminal's own scrollback, which no plugin can scroll. The list, the counts and the commands still work there: `/jump 3` prints that prompt in full and says why it could not scroll. To jump, start Claude Code with `CLAUDE_CODE_NO_FLICKER=1`; otherwise use your terminal's own scroll and search.
-- **No global keyboard shortcuts.** A plugin cannot add shortcuts of its own. Use the commands (`/prev`, `/next`, `/jump …`), or `ctrl+x tab` and then a letter on the row above the prompt.
-- **The last few prompts** cannot reach the top of the screen when there is nothing below them; after a jump they show further down.
+- **Scrolling back and the tick row work only in the fullscreen layout.** On Claude Code's main screen (often the default) the conversation lives in your terminal's own scrollback, which no plugin can scroll, and the plugin cannot switch the layout for you. There the list and the commands still work: `/jump 3` prints that prompt in full and says why it could not scroll. The first time this happens, the reply also explains how to turn on the fullscreen layout (once; `/jump-help` shows it again).
+- **Mouse on the main screen.** Claude Code does not pass the mouse to plugins there; use `ctrl+x tab` and the keyboard in the list.
+- **No global keyboard shortcuts.** A plugin cannot add shortcuts of its own. Use the commands, or `ctrl+x tab` and then a letter.
+- **The last few prompts** cannot reach the top of the screen when there is nothing below them; after a jump they show further down, and `k` there may not move.
 - **Bookmarks** come back to the start of the reply block that was at the top, not to the exact line. Bookmarks last for the session.
-- **Narrow terminals.** The list opened at start appears once the terminal is wide enough (about 110–144 columns); until then the row above the prompt is there. `/jump` opens the list as a box above the prompt at any width.
-- **Times and pauses** are known only for prompts sent while the plugin was running. A pause of more than 15 minutes starts a new part in the list.
+- **Narrow terminals.** The tick row works at any width. The list docks beside the chat from about 110 columns; narrower, `l` or `/jump` opens it as a box above the prompt, where a pointed-at row shows the start of its answer on one line instead of a card.
+- **Times, pauses and previews.** Times and the 15-minute gaps are known only for prompts sent while the plugin was running. Search and previews use the first 300 characters of each answer.
 - **The counts** cover the main conversation; work done inside subagents is not counted.
 - Built and tested in the terminal with Claude Code 2.1.332. The desktop app and IDE extensions have not been checked.
 
@@ -130,7 +134,7 @@ claude plugin test plugins/prompt-jump          # tests in tests/
 claude --plugin-dir plugins/prompt-jump         # try this copy in one session
 ```
 
-`--plugin-dir` replaces an installed copy of the same plugin for that session only.
+`--plugin-dir` replaces an installed copy of the same plugin for that session only. What changed between versions is in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

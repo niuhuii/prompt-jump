@@ -73,20 +73,52 @@ export type FactsWords = {
   failures: (n: number) => string
   aborted: string
   running: string
+  /** 清單右邊的短標記用。 */
+  abortedShort: string
+  runningShort: string
+  /** 檔名之間的分隔。 */
+  listJoin: string
 }
 
-/** 目錄裡每則下面那一行灰字；沒有可說的回空字串。 */
+/** 預覽卡片裡「這輪做了什麼」那一行；沒有可說的回空字串。 */
 export const factsLine = (f: Facts | undefined, isRunning: boolean, w: FactsWords): string => {
   const parts: string[] = []
   if (f !== undefined) {
-    if (f.files.length === 1) parts.push(w.file(baseName(f.files[0]!)))
-    else if (f.files.length > 1) parts.push(w.files(f.files.length))
+    if (f.files.length > 0 && f.files.length <= 3) parts.push(w.file(f.files.map(baseName).join(w.listJoin)))
+    else if (f.files.length > 3) parts.push(w.files(f.files.length))
     if (f.commands > 0) parts.push(w.commands(f.commands))
     if (f.failures > 0) parts.push(w.failures(f.failures))
     if (f.isAborted) parts.push(w.aborted)
   }
   if (isRunning) parts.push(w.running)
-  return parts.join(' · ')
+  return parts.join('  ')
+}
+
+/** 清單每列右邊的短標記：`±2`（改了幾個檔）`$4`（幾個指令）`✗1`（幾個失敗）。 */
+export type TailPart = { text: string; isFailure?: boolean }
+
+export const factsTail = (f: Facts | undefined, isRunning: boolean, w: FactsWords): TailPart[] => {
+  if (isRunning) return [{ text: w.runningShort }]
+  if (f === undefined) return []
+  const parts: TailPart[] = []
+  if (f.files.length > 0) parts.push({ text: `±${f.files.length}` })
+  if (f.commands > 0) parts.push({ text: `$${f.commands}` })
+  if (f.failures > 0) parts.push({ text: `✗${f.failures}`, isFailure: true })
+  if (f.isAborted) parts.push({ text: w.abortedShort })
+  return parts
+}
+
+/** 刻度的七種高度，由低到高。 */
+export const TICKS = '▁▂▃▄▅▆▇'
+
+/**
+ * 一輪的工作量換成刻度高度（0–6）：改一個檔算 2、跑一個指令算 1、回答每 500 字算 1。
+ * 加總後取 log2 再乘 1.5：小的差別看得出來（1、3、6、10 分各差一級），
+ * 15 分以上才到最高那一格。
+ */
+export const workLevel = (f: Facts | undefined, answerSize = 0): number => {
+  const score = (f ? f.files.length * 2 + f.commands : 0) + answerSize / 500
+  return Math.max(0, Math.min(TICKS.length - 1, Math.floor(1.5 * Math.log2(1 + score))))
 }
 
 export type Chapter<T> = { index: number; gapMs?: number; items: T[] }
