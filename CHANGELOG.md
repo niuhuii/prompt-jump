@@ -1,6 +1,14 @@
 # Changelog
 
-## prompt-jump 0.3.0
+## prompt-jump 0.3.1
+
+### Fixed
+
+- **Moving the pointer down the list no longer gets stuck on a card.** The card for the row you point at used to open right under that row, over the rows after it. A card counts as part of its row while the pointer is on it, so moving down landed on the card, the card stayed, and the next rows could not be pointed at. The card now sits below the list, or, when the list is longer than the pane, at the edge of the pane away from the row you point at: the bottom when you point in the upper half, the top when you point in the lower half. It never covers the row you point at or the rows next to it. In the short box above the prompt (narrow terminals) the one-line preview follows the same rule and now starts with the prompt's number.
+
+### Changed
+
+- **"No prompts" says which conversation.** `/jump` and the list's empty state now read "No prompts in this conversation yet": the tick row, the list and the commands only count the conversation they run in, so `/jump` typed in another window (another session) can say there are none while this window's tick row shows some.
 
 ### Changed, affects existing users
 

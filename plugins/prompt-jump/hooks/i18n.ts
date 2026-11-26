@@ -131,7 +131,7 @@ export const STRINGS: Record<Lang, Strings> = {
     titleUsage: n => `自動標題用量約 ${n} tokens（估計）`,
     paneTitle: '對話目錄',
     filterPlaceholder: '篩選：提問、回答、檔名',
-    statusEmpty: '還沒有訊息',
+    statusEmpty: '這個對話還沒有提問',
     statusFiltered: (shown, total) => `符合 ${shown} / ${total}`,
     statusAll: (total, here) => (here === undefined ? `${total} 則` : `${here} / ${total}`),
     mainScreenNote: '一般版面點了不會捲動，/jump-help 看怎麼開全螢幕版面',
@@ -183,7 +183,7 @@ export const STRINGS: Record<Lang, Strings> = {
       `對話目錄放不下（${reason}）；把視窗拉寬就會出現。提示框上方已出現選單：按 ctrl+x tab 移過去，↑↓ 選、Enter 跳。`,
     paneUnavailable: reason =>
       `對話目錄沒辦法顯示：${reason}。可以用 /jump 編號 或 /jump 關鍵字。`,
-    noPrompts: '目錄裡還沒有訊息。',
+    noPrompts: '這個對話還沒有提問（刻度列與清單只列目前這個對話的提問）。',
     notFound: arg => `找不到「${arg}」。`,
     noSuchIndex: (n, total) => `沒有第 ${n} 則（目前共 ${total} 則）。`,
     atFirst: '已經是第一則。',
@@ -256,7 +256,7 @@ export const STRINGS: Record<Lang, Strings> = {
     titleUsage: n => `Auto titles used about ${n} tokens (estimate)`,
     paneTitle: 'Prompts',
     filterPlaceholder: 'Filter: prompts, answers, file names',
-    statusEmpty: 'No prompts yet',
+    statusEmpty: 'No prompts in this conversation yet',
     statusFiltered: (shown, total) => `${shown} of ${total}`,
     statusAll: (total, here) =>
       here === undefined ? `${total} ${total === 1 ? 'prompt' : 'prompts'}` : `${here} / ${total}`,
@@ -308,7 +308,7 @@ export const STRINGS: Record<Lang, Strings> = {
     paneWaiting: reason =>
       `The prompt index does not fit (${reason}); widen the window and it appears. A picker is above the prompt box: press ctrl+x tab to reach it, ↑↓ to choose, Enter to jump.`,
     paneUnavailable: reason => `The prompt index cannot be shown: ${reason}. Use /jump <number> or /jump <words>.`,
-    noPrompts: 'No prompts yet.',
+    noPrompts: 'No prompts in this conversation yet (the tick row and the list only show this conversation’s prompts).',
     notFound: arg => `Nothing matches “${arg}”.`,
     noSuchIndex: (n, total) => `There is no #${n} (${total} so far).`,
     atFirst: 'Already at the first prompt.',

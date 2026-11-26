@@ -4,6 +4,7 @@ import type { EngineInterface, Register, SessionMessage } from 'claude-code'
 type Engine = EngineInterface
 
 import type { AnswerHead, Facts, Mark, PromptEntry } from '../types'
+import { cardTop } from './card'
 import { TICKS, factsLine, factsTail, groupChapters, workLevel } from './facts'
 import { STRINGS, resolveLang, runtimeLocale } from './i18n'
 import type { Strings } from './i18n'
@@ -818,71 +819,91 @@ export const register: Register = (on, options) => {
     // 色條一欄、編號、兩格空白。
     const prefix = 1 + numCols + 2
     const { offset, bodyRows } = e.props.scroll
-    // 內容第幾列（卡片太靠底時改畫在上面要用）。
+    // 內容第幾列（放卡片要用）。
     let y = 0
 
-    // 卡片全部畫在清單最後面：absolute 的 Box 只蓋得住畫在它前面的東西，放在列裡
-    // 會被下面幾列蓋掉。每張卡片跟它那一列用同一個 hover 群組連起來。
-    const cards: unknown[] = []
+    // 每一列在內容的第幾列、卡片要不要直接顯示（鍵盤焦點那一列）；列都排完、
+    // 知道內容一共幾列後才放卡片。
+    const rowsAt: { i: number; rowY: number; isShown: boolean }[] = []
 
-    /** 卡片：粗體提問兩行、灰字回答開頭兩行、這輪做了什麼一行。top 是清單內容的第幾列。 */
-    const card = (i: number, rowY: number, isShown: boolean) => {
+    /**
+     * 卡片：粗體提問兩行、灰字回答開頭兩行、這輪做了什麼一行；窗格太矮放不下時改成
+     * 一行（編號＋回答開頭）。位置由 cardTop 決定：不蓋住指到的那一列和上下相鄰的列，
+     * 否則指標往下移會落在卡片上（卡片跟那一列同一個 hover 群組，指著它群組就一直亮著），
+     * 下一列指不到。
+     */
+    const card = (i: number, rowY: number, isShown: boolean, contentRows: number) => {
       const one = list[i]!
       const f = factsOf[one.id]
       const inner = Math.max(8, W - 3 - 4)
-      const lines = (text: string, max: number) => Math.min(max, Math.max(1, Math.ceil(widthOf(text) / inner)))
+      // 提問、回答各最多兩行（maxLines）：一行放得下是一行，放不下就是兩行。
+      const lines = (text: string) => (widthOf(text) <= inner ? 1 : 2)
       const title = `${i + 1}  ${named[one.id] ?? one.text}`
       const answer = heads[one.id]?.head ?? (isRunning && i === list.length - 1 ? s.facts.running : s.noAnswerYet)
       const done = factsLine(f, false, s.facts)
       // 已經顯示的（鍵盤焦點那一列）不能再掛 hover 顯示，引擎會拒絕整棵樹。
       const display = isShown ? ('flex' as const) : ('none' as const)
       const hover = isShown ? undefined : { scope: rowScope(one.id), display: 'flex' as const }
-      // 窗格太矮（提示框上方那種）放不下整張卡片：改成那一列底下一行灰字的回答開頭。
-      if (bodyRows < 12) {
+      // 提示框上方的窗格框貼著內容，底下沒有空白；側邊窗格的空白畫得出來。
+      const isInline = e.props.placement === 'inline'
+      const room = {
+        rowY,
+        offset,
+        windowRows: isInline ? Math.min(bodyRows, contentRows) : bodyRows,
+        contentRows,
+        hasRoomBelow: !isInline,
+      }
+      const height = 2 + lines(title) + lines(answer) + (done === '' ? 0 : 1)
+      const top = cardTop({ ...room, height })
+      if (top !== undefined) {
         return (
           <Box
             key={`k-${one.id}`}
             position="absolute"
-            top={rowY + 1}
-            left={prefix}
-            width={W - prefix}
+            top={top}
+            left={2}
+            width={W - 3}
+            height={height}
+            flexDirection="column"
+            borderStyle="round"
+            borderDimColor
             backgroundColor={SOFT_BG}
+            paddingX={1}
+            // 跟那一列同一個 hover 群組：指到那一列就顯示。
             display={display}
             hover={hover}
           >
-            <Text dimColor>{clip(answer, W - prefix)}</Text>
+            <Text bold maxLines={2}>
+              {title}
+            </Text>
+            <Text dimColor maxLines={2}>
+              {answer}
+            </Text>
+            {done !== '' && (
+              <Text dimColor color={f !== undefined && f.failures > 0 ? 'red' : undefined}>
+                {clip(done, inner)}
+              </Text>
+            )}
           </Box>
         )
       }
-      const height = 2 + lines(title, 2) + lines(answer, 2) + (done === '' ? 0 : 1)
-      const isBelow = rowY - offset + 1 + height <= bodyRows || rowY - offset - height < 0
+      const lineTop = cardTop({ ...room, height: 1 })
+      // 矮到連一行都會蓋到相鄰的列：不放預覽。
+      if (lineTop === undefined) return null
+      const num = String(i + 1).padStart(numCols, ' ')
       return (
         <Box
           key={`k-${one.id}`}
           position="absolute"
-          top={isBelow ? rowY + 1 : rowY - height}
-          left={2}
-          width={W - 3}
-          flexDirection="column"
-          borderStyle="round"
-          borderDimColor
+          top={lineTop}
+          left={0}
+          width={W}
+          height={1}
           backgroundColor={SOFT_BG}
-          paddingX={1}
-          // 跟那一列同一個 hover 群組：指到那一列就顯示。
           display={display}
           hover={hover}
         >
-          <Text bold maxLines={2}>
-            {title}
-          </Text>
-          <Text dimColor maxLines={2}>
-            {answer}
-          </Text>
-          {done !== '' && (
-            <Text dimColor color={f !== undefined && f.failures > 0 ? 'red' : undefined}>
-              {clip(done, inner)}
-            </Text>
-          )}
+          <Text dimColor>{clip(` ${num}  ${answer}`, W)}</Text>
         </Box>
       )
     }
@@ -898,9 +919,8 @@ export const register: Register = (on, options) => {
       const pad = Math.max(1, W - prefix - widthOf(shownText) - tailCols)
       const hit = hitOf.get(i)
       const note = isFiltering && hit !== undefined && needsNote(hit, shownText)
-      const rowY = y
+      rowsAt.push({ i, rowY: y, isShown: focusId === one.id })
       y += note ? 2 : 1
-      cards.push(card(i, rowY, focusId === one.id))
       return (
         <Box key={`r-${one.id}`} flexDirection="column" hover={{ scope: rowScope(one.id) }}>
           <Box backgroundColor={isHere ? SOFT_BG : undefined}>
@@ -947,6 +967,21 @@ export const register: Register = (on, options) => {
     const isMainScreen = e.viewport?.isFullscreen === false
     if (isMainScreen) y++
     if (list.length > 0 && shown.length === 0) y++
+    // 先排列（記下每一列在第幾列），再放卡片。
+    const body = chapters.map((ch, k) => {
+      const line = head(ch)
+      if (line !== undefined) y++
+      return (
+        <Box key={`c-${k}`} flexDirection="column">
+          {line !== undefined && <Text dimColor>{line}</Text>}
+          {ch.items.map(row)}
+        </Box>
+      )
+    })
+    if (spent > 0) y++
+    const contentRows = y
+    // 卡片全部畫在清單最後面：absolute 的 Box 只蓋得住畫在它前面的東西。
+    const cards = rowsAt.map(at => card(at.i, at.rowY, at.isShown, contentRows)).filter(one => one !== null)
     return (
       <Box flexDirection="column">
         <Input
@@ -964,16 +999,7 @@ export const register: Register = (on, options) => {
         <Text dimColor>{status}</Text>
         {isMainScreen && <Text color="yellow">{clip(s.mainScreenNote, W)}</Text>}
         {list.length > 0 && shown.length === 0 && <Text dimColor>{s.noMatch(q.trim())}</Text>}
-        {chapters.map((ch, k) => {
-          const line = head(ch)
-          if (line !== undefined) y++
-          return (
-            <Box key={`c-${k}`} flexDirection="column">
-              {line !== undefined && <Text dimColor>{line}</Text>}
-              {ch.items.map(row)}
-            </Box>
-          )
-        })}
+        {body}
         {spent > 0 && <Text dimColor>{clip(s.titleUsage(spent), W)}</Text>}
         {cards as never}
       </Box>

@@ -1,6 +1,6 @@
 {
   "name": "prompt-jump",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "license": "MIT",
   "description": "Jump back to any prompt you sent in a long Claude Code session: a prompt index pane, /prev /next /jump, bookmarks. 對話目錄：列出你問過的每一則，點一下或打 /jump 就捲回那裡。",
   "author": {
