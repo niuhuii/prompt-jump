@@ -30,7 +30,7 @@ test('what counts as Chinese', () => {
   }
 })
 
-const EN = { options: { language: 'en' } } as const
+const EN = { options: { language: 'en', tickRowPosition: 'above' } } as const
 
 test('English interface: pane, the row above the prompt and command replies', EN, async ($, on) => {
   const rows = [

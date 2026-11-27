@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, SessionMessage } from 'claude-code'
+import type { EngineInterface, Register, RenderElement, RenderInput, SessionMessage } from 'claude-code'
 
 type Engine = EngineInterface
 
@@ -41,8 +41,16 @@ type Config = {
   language: unknown
   titles: boolean
   titleModel: string
+  /** 刻度列放在輸入框下方（狀態列，唯讀）還是上方（可點）。 */
+  tickRowPosition: 'below' | 'above'
 }
-let cfg: Config = { autoOpenPane: false, language: 'auto', titles: false, titleModel: 'haiku' }
+let cfg: Config = {
+  autoOpenPane: false,
+  language: 'auto',
+  titles: false,
+  titleModel: 'haiku',
+  tickRowPosition: 'below',
+}
 
 /** 清單窗格想要的寬度（欄）；使用者拖過的寬度優先。 */
 const PANE_COLUMNS = 44
@@ -502,6 +510,278 @@ const makeTitle = async ($: Engine, job: TitleJob) => {
   await saveTitles($)
 }
 
+/** 狀態列有幾行字（尾端空行不算）。 */
+const textRows = (text: string | null | undefined) =>
+  text === null || text === undefined || text.trim() === '' ? 0 : text.replace(/\s+$/, '').split('\n').length
+
+// ── 提示框上方：刻度列＋預覽列 ─────────────────────────────────────
+// 第一列：目前第幾則、每則一根刻度（高度＝工作量，有失敗的那輪紅色，目前那一則
+// 亮青色，停超過 15 分鐘空一格）、k ‹ j › a 回答 l 清單。第二列：預覽，平常是
+// 目前那一則，滑鼠指到哪根刻度（或鍵盤移到哪根）就換成那一則。
+// /jump、/marks 叫出的選單也畫在這裡。一般版面捲不動對話，這兩列不占位置。
+// tickRowPosition=below（預設）：刻度列＋預覽列在狀態列（輸入框下方、claude-hud 的下面，唯讀）；
+// 上方 AbovePrompt 只留一列按鈕。above：刻度列、預覽列、按鈕都在上方，刻度可點。
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function drawBand($: Engine, e: any, next: (e: any) => Promise<RenderElement>, site: 'above' | 'below') {
+  if (e.viewport?.isFullscreen !== undefined) isFullscreenNow = e.viewport.isFullscreen
+  const isBelow = site === 'below'
+  // tickRowPosition=above：刻度列整個在上方，狀態列不動。
+  if (isBelow && cfg.tickRowPosition === 'above') return next(e)
+  // tickRowPosition=below：上方只留一列按鈕（和 /jump 選單），刻度與預覽在狀態列。
+  const isButtonsOnly = !isBelow && cfg.tickRowPosition === 'below'
+  if (e.props.hasSurvey || e.viewport?.isFullscreen === false) return next(e)
+  const list = await read($, prompts)
+  const menu = isBelow ? null : await read($, picker)
+  if (list.length === 0 && !menu) return next(e)
+  // 狀態列的列數是整段答案（claude-hud 自己的行也算）共用的；扣掉它之後不夠一列就不畫。
+  const hudRows = isBelow && !e.props.isManaged ? textRows(e.props.text) : 0
+  const room = isBelow ? e.props.maxRows - hudRows : e.props.maxRows
+  if (isBelow && room < 1) return next(e)
+  const { Box, Button, Select, Text } = $.ui.resolve(e as RenderInput<'AbovePrompt' | 'StatusLine', 'terminal'>)
+  const W = Math.max(20, isBelow ? e.props.columns - 4 : e.props.bodyColumns)
+  const hud = isBelow ? await next(e) : undefined
+
+  if (menu) {
+    return (
+      <Box flexDirection="column">
+        <Select
+          key="jump-pick"
+          label={menu.title}
+          value={menu.options[0]?.value}
+          autoFocus
+          options={menu.options.map(one => ({
+            value: one.value,
+            label: clip(one.label, W - widthOf(menu.title) - 6),
+          }))}
+          onSelect={value => {
+            press($, planValue(value))
+            void update($, picker, () => null)
+          }}
+        />
+        <Button key="jump-close" plain hotkey="x" onPress={() => void update($, picker, () => null)}>
+          {s.pickerClose}
+        </Button>
+      </Box>
+    )
+  }
+
+  const here = await read($, current)
+  const focusId = await read($, focused)
+  const factsOf = await read($, facts)
+  const heads = await read($, answers)
+  const stamps = await read($, times)
+  const lastAt = await read($, activity)
+  const isRunning = await read($, isBusy)
+  const named = cfg.titles ? await read($, titles) : {}
+  const n = list.length
+  const at = list.findIndex(one => one.id === here)
+  const focusAt = list.findIndex(one => one.id === focusId)
+  const hasPreviewRow = room >= 2
+
+  // 左邊：「8/12」或（不知道目前位置時）「12」。
+  const numW = String(n).length
+  const tagCols = at >= 0 ? numW + 1 + numW : numW
+  // 右邊的按鈕：不加框的按鈕畫成「k: ‹」，按鈕之間空兩格。
+  const buttons = [
+    { key: 'band-prev', hotkey: 'k', text: s.bandPrev, onPress: () => press($, planStep('prev')) },
+    { key: 'band-next', hotkey: 'j', text: s.bandNext, onPress: () => press($, planStep('next')) },
+    { key: 'band-ans', hotkey: 'a', text: s.bandAnswer, onPress: () => press($, planAnswer()) },
+    {
+      key: 'band-open',
+      hotkey: 'l',
+      text: s.bandList,
+      onPress: () =>
+        void openPane($).then(opened => (opened.isPlaced ? undefined : update($, picker, () => recentPicker()))),
+    },
+  ]
+  const buttonCols = (shown: typeof buttons) => shown.reduce((m, b) => m + widthOf(b.text) + 3 + 2, 0)
+  // 太窄時先拿掉「回答」「清單」，留住刻度。
+  const kept = isBelow ? [] : W - tagCols - 2 - buttonCols(buttons) >= 12 ? buttons : buttons.slice(0, 2)
+  // 唯讀的刻度列右邊放一行指令提示（放得下才放）。
+  const hintCols = widthOf(s.bandCommands)
+  const hasHint = isBelow && W - tagCols - 2 - hintCols - 2 >= 12
+  const tickRoom = Math.max(0, W - tagCols - 2 - (hasHint ? hintCols + 2 : buttonCols(kept)))
+
+  const isGap = (i: number) => {
+    const start = stamps[list[i]!.id]
+    const prev = list[i - 1]
+    const end = prev === undefined ? undefined : (lastAt[prev.id] ?? stamps[prev.id])
+    return start !== undefined && end !== undefined && start - end > 15 * 60 * 1000
+  }
+  const plan = planTicks(n, at, tickRoom, isGap)
+  const tickLeft = tagCols + 2
+
+  /** 預覽列的內容：編號、粗體提問、灰字回答開頭。 */
+  const preview = (i: number) => {
+    const one = list[i]!
+    const isHere = i === at
+    const num = String(i + 1).padStart(numW)
+    const answer = heads[one.id]?.head ?? (isRunning && i === n - 1 ? s.facts.running : s.noAnswerYet)
+    const text = named[one.id] ?? one.text
+    const afterNum = W - numW - 2
+    const qCols = Math.min(widthOf(text), Math.max(10, Math.floor(afterNum * 0.45)))
+    const aCols = afterNum - qCols - 3
+    return (
+      <Box flexDirection="row">
+        <Text color={isHere ? 'cyan' : undefined} dimColor={!isHere} bold={isHere}>
+          {num}
+        </Text>
+        <Box width={2} flexShrink={0} />
+        <Text bold>{clip(text, qCols)}</Text>
+        {aCols > 6 && <Box width={3} flexShrink={0} />}
+        {aCols > 6 && <Text dimColor>{clip(answer, aCols)}</Text>}
+      </Box>
+    )
+  }
+
+  const ticks: unknown[] = []
+  let col = 0
+  if (plan.before > 0) {
+    ticks.push(
+      <Text key="more-l" dimColor>
+        {`‹${plan.before}`}
+      </Text>,
+    )
+    col = String(plan.before).length + 1
+  }
+  for (const item of plan.items) {
+    if (item.col > col) ticks.push(<Box key={`g${item.index}`} width={item.col - col} flexShrink={0} />)
+    const one = list[item.index]!
+    const f = factsOf[one.id]
+    const isHere = item.index === at
+    const isFailed = f !== undefined && f.failures > 0
+    const glyph = TICKS[workLevel(f, heads[one.id]?.size)]!
+    ticks.push(
+      <Box key={`tb-${one.id}`} width={plan.per} flexShrink={0}>
+        {isBelow ? (
+          <Box key={`t-${one.id}`} hover={{ backgroundColor: SOFT_BG }}>
+            <Text color={isHere ? 'cyan' : isFailed ? 'red' : undefined} dimColor={!isHere && !isFailed} bold={isHere}>
+              {glyph}
+            </Text>
+          </Box>
+        ) : (
+          <Button key={`t-${one.id}`} plain onPress={() => press($, planValue(one.id))}>
+            <Text color={isHere ? 'cyan' : isFailed ? 'red' : undefined} dimColor={!isHere && !isFailed} bold={isHere}>
+              {glyph}
+            </Text>
+          </Button>
+        )}
+        {hasPreviewRow && (
+          <Box
+            position="absolute"
+            top={1}
+            left={-(tickLeft + item.col)}
+            width={W}
+            backgroundColor={SOFT_BG}
+            display="none"
+            hover={{ display: 'flex' }}
+          >
+            {preview(item.index)}
+          </Box>
+        )}
+      </Box>,
+    )
+    col = item.col + plan.per
+  }
+  if (plan.after > 0) {
+    if (plan.per === 1) ticks.push(<Box key="more-gap" width={1} flexShrink={0} />)
+    ticks.push(
+      <Text key="more-r" dimColor>
+        {`${plan.after}›`}
+      </Text>,
+    )
+  }
+
+  const shownAt = focusAt >= 0 ? focusAt : at
+  const tickRow = (
+    <Box key="ticks" flexDirection="row">
+      <Box flexShrink={0}>
+        {at >= 0 ? (
+          <Text>
+            <Text color="cyan" bold>
+              {String(at + 1).padStart(numW)}
+            </Text>
+            <Text dimColor>{`/${n}`}</Text>
+          </Text>
+        ) : (
+          <Text dimColor>{String(n)}</Text>
+        )}
+      </Box>
+      <Box width={2} flexShrink={0} />
+      <Box width={tickRoom} flexShrink={0} flexDirection="row">
+        {ticks as never}
+      </Box>
+      {kept.map((b, k) => (
+        <Box key={`w-${b.key}`} flexDirection="row" flexShrink={0}>
+          <Box width={2} flexShrink={0} />
+          <Button key={b.key} plain hotkey={b.hotkey} onPress={b.onPress}>
+            {b.text}
+          </Button>
+          {k === kept.length - 1 && <Box width={1} flexShrink={0} />}
+        </Box>
+      ))}
+      {hasHint && <Box width={2} flexShrink={0} />}
+      {hasHint && <Text dimColor>{s.bandCommands}</Text>}
+    </Box>
+  )
+  const previewRow = !hasPreviewRow ? undefined : shownAt >= 0 ? (
+    <Box key="pv" flexDirection="row" backgroundColor={focusAt >= 0 ? SOFT_BG : undefined}>
+      {preview(shownAt)}
+    </Box>
+  ) : (
+    <Text key="pv" dimColor>
+      {clip(isBelow ? s.bandHintBelow : s.bandHint, W)}
+    </Text>
+  )
+  // 指到刻度時浮出的預覽（absolute）只蓋得住畫在它前面的東西：預覽列先畫，
+  // 刻度列後畫；用 column-reverse 讓刻度列仍在上面。
+  // 上方只留按鈕列：位置標籤＋k ‹ j › a 回答 l 清單（熱鍵與按鈕照常）。
+  if (isButtonsOnly) {
+    const shownButtons = W - tagCols - 2 - buttonCols(buttons) >= 0 ? buttons : buttons.slice(0, 2)
+    return (
+      <Box key="buttons" flexDirection="row">
+        <Box flexShrink={0}>
+          {at >= 0 ? (
+            <Text>
+              <Text color="cyan" bold>
+                {String(at + 1).padStart(numW)}
+              </Text>
+              <Text dimColor>{`/${n}`}</Text>
+            </Text>
+          ) : (
+            <Text dimColor>{String(n)}</Text>
+          )}
+        </Box>
+        {shownButtons.map(b => (
+          <Box key={`w-${b.key}`} flexDirection="row" flexShrink={0}>
+            <Box width={2} flexShrink={0} />
+            <Button key={b.key} plain hotkey={b.hotkey} onPress={b.onPress}>
+              {b.text}
+            </Button>
+          </Box>
+        ))}
+      </Box>
+    )
+  }
+  if (isBelow) {
+    return (
+      <Box flexDirection="column">
+        {hud}
+        <Box flexDirection="column-reverse">
+          {previewRow}
+          {tickRow}
+        </Box>
+      </Box>
+    )
+  }
+  return (
+    <Box flexDirection="column-reverse">
+      {previewRow}
+      {tickRow}
+    </Box>
+  )
+}
+
 export const register: Register = (on, options) => {
   cfg = {
     autoOpenPane: options.autoOpenPane === true,
@@ -509,6 +789,7 @@ export const register: Register = (on, options) => {
     titles: options.titles === true,
     titleModel:
       typeof options.titleModel === 'string' && options.titleModel.trim() !== '' ? options.titleModel : 'haiku',
+    tickRowPosition: options.tickRowPosition === 'above' ? 'above' : 'below',
   }
   // 指定了語言就馬上用（熱重載後畫面不必等 session.start）；auto 等 session.start 判斷。
   if (cfg.language === 'zh-TW' || cfg.language === 'en') s = STRINGS[cfg.language]
@@ -1006,206 +1287,7 @@ export const register: Register = (on, options) => {
     )
   })
 
-  // ── 提示框上方：刻度列＋預覽列 ─────────────────────────────────────
-  // 第一列：目前第幾則、每則一根刻度（高度＝工作量，有失敗的那輪紅色，目前那一則
-  // 亮青色，停超過 15 分鐘空一格）、k ‹ j › a 回答 l 清單。第二列：預覽，平常是
-  // 目前那一則，滑鼠指到哪根刻度（或鍵盤移到哪根）就換成那一則。
-  // /jump、/marks 叫出的選單也畫在這裡。一般版面捲不動對話，這兩列不占位置。
-  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.viewport?.isFullscreen !== undefined) isFullscreenNow = e.viewport.isFullscreen
-    if (e.props.hasSurvey || e.viewport?.isFullscreen === false) return next(e)
-    const list = await read($, prompts)
-    const menu = await read($, picker)
-    if (list.length === 0 && !menu) return next(e)
-    const { Box, Button, Select, Text } = $.ui.resolve(e)
-    const W = Math.max(20, e.props.bodyColumns)
-
-    if (menu) {
-      return (
-        <Box flexDirection="column">
-          <Select
-            key="jump-pick"
-            label={menu.title}
-            value={menu.options[0]?.value}
-            autoFocus
-            options={menu.options.map(one => ({
-              value: one.value,
-              label: clip(one.label, W - widthOf(menu.title) - 6),
-            }))}
-            onSelect={value => {
-              press($, planValue(value))
-              void update($, picker, () => null)
-            }}
-          />
-          <Button key="jump-close" plain hotkey="x" onPress={() => void update($, picker, () => null)}>
-            {s.pickerClose}
-          </Button>
-        </Box>
-      )
-    }
-
-    const here = await read($, current)
-    const focusId = await read($, focused)
-    const factsOf = await read($, facts)
-    const heads = await read($, answers)
-    const stamps = await read($, times)
-    const lastAt = await read($, activity)
-    const isRunning = await read($, isBusy)
-    const named = cfg.titles ? await read($, titles) : {}
-    const n = list.length
-    const at = list.findIndex(one => one.id === here)
-    const focusAt = list.findIndex(one => one.id === focusId)
-    const hasPreviewRow = e.props.maxRows >= 2
-
-    // 左邊：「8/12」或（不知道目前位置時）「12」。
-    const numW = String(n).length
-    const tagCols = at >= 0 ? numW + 1 + numW : numW
-    // 右邊的按鈕：不加框的按鈕畫成「k: ‹」，按鈕之間空兩格。
-    const buttons = [
-      { key: 'band-prev', hotkey: 'k', text: s.bandPrev, onPress: () => press($, planStep('prev')) },
-      { key: 'band-next', hotkey: 'j', text: s.bandNext, onPress: () => press($, planStep('next')) },
-      { key: 'band-ans', hotkey: 'a', text: s.bandAnswer, onPress: () => press($, planAnswer()) },
-      {
-        key: 'band-open',
-        hotkey: 'l',
-        text: s.bandList,
-        onPress: () =>
-          void openPane($).then(opened => (opened.isPlaced ? undefined : update($, picker, () => recentPicker()))),
-      },
-    ]
-    const buttonCols = (shown: typeof buttons) => shown.reduce((m, b) => m + widthOf(b.text) + 3 + 2, 0)
-    // 太窄時先拿掉「回答」「清單」，留住刻度。
-    const kept = W - tagCols - 2 - buttonCols(buttons) >= 12 ? buttons : buttons.slice(0, 2)
-    const tickRoom = Math.max(0, W - tagCols - 2 - buttonCols(kept))
-
-    const isGap = (i: number) => {
-      const start = stamps[list[i]!.id]
-      const prev = list[i - 1]
-      const end = prev === undefined ? undefined : (lastAt[prev.id] ?? stamps[prev.id])
-      return start !== undefined && end !== undefined && start - end > 15 * 60 * 1000
-    }
-    const plan = planTicks(n, at, tickRoom, isGap)
-    const tickLeft = tagCols + 2
-
-    /** 預覽列的內容：編號、粗體提問、灰字回答開頭。 */
-    const preview = (i: number) => {
-      const one = list[i]!
-      const isHere = i === at
-      const num = String(i + 1).padStart(numW)
-      const answer = heads[one.id]?.head ?? (isRunning && i === n - 1 ? s.facts.running : s.noAnswerYet)
-      const text = named[one.id] ?? one.text
-      const afterNum = W - numW - 2
-      const qCols = Math.min(widthOf(text), Math.max(10, Math.floor(afterNum * 0.45)))
-      const aCols = afterNum - qCols - 3
-      return (
-        <Box flexDirection="row">
-          <Text color={isHere ? 'cyan' : undefined} dimColor={!isHere} bold={isHere}>
-            {num}
-          </Text>
-          <Box width={2} flexShrink={0} />
-          <Text bold>{clip(text, qCols)}</Text>
-          {aCols > 6 && <Box width={3} flexShrink={0} />}
-          {aCols > 6 && <Text dimColor>{clip(answer, aCols)}</Text>}
-        </Box>
-      )
-    }
-
-    const ticks: unknown[] = []
-    let col = 0
-    if (plan.before > 0) {
-      ticks.push(
-        <Text key="more-l" dimColor>
-          {`‹${plan.before}`}
-        </Text>,
-      )
-      col = String(plan.before).length + 1
-    }
-    for (const item of plan.items) {
-      if (item.col > col) ticks.push(<Box key={`g${item.index}`} width={item.col - col} flexShrink={0} />)
-      const one = list[item.index]!
-      const f = factsOf[one.id]
-      const isHere = item.index === at
-      const isFailed = f !== undefined && f.failures > 0
-      const glyph = TICKS[workLevel(f, heads[one.id]?.size)]!
-      ticks.push(
-        <Box key={`tb-${one.id}`} width={plan.per} flexShrink={0}>
-          <Button key={`t-${one.id}`} plain onPress={() => press($, planValue(one.id))}>
-            <Text color={isHere ? 'cyan' : isFailed ? 'red' : undefined} dimColor={!isHere && !isFailed} bold={isHere}>
-              {glyph}
-            </Text>
-          </Button>
-          {hasPreviewRow && (
-            <Box
-              position="absolute"
-              top={1}
-              left={-(tickLeft + item.col)}
-              width={W}
-              backgroundColor={SOFT_BG}
-              display="none"
-              hover={{ display: 'flex' }}
-            >
-              {preview(item.index)}
-            </Box>
-          )}
-        </Box>,
-      )
-      col = item.col + plan.per
-    }
-    if (plan.after > 0) {
-      if (plan.per === 1) ticks.push(<Box key="more-gap" width={1} flexShrink={0} />)
-      ticks.push(
-        <Text key="more-r" dimColor>
-          {`${plan.after}›`}
-        </Text>,
-      )
-    }
-
-    const shownAt = focusAt >= 0 ? focusAt : at
-    const tickRow = (
-      <Box key="ticks" flexDirection="row">
-        <Box flexShrink={0}>
-          {at >= 0 ? (
-            <Text>
-              <Text color="cyan" bold>
-                {String(at + 1).padStart(numW)}
-              </Text>
-              <Text dimColor>{`/${n}`}</Text>
-            </Text>
-          ) : (
-            <Text dimColor>{String(n)}</Text>
-          )}
-        </Box>
-        <Box width={2} flexShrink={0} />
-        <Box width={tickRoom} flexShrink={0} flexDirection="row">
-          {ticks as never}
-        </Box>
-        {kept.map((b, k) => (
-          <Box key={`w-${b.key}`} flexDirection="row" flexShrink={0}>
-            <Box width={2} flexShrink={0} />
-            <Button key={b.key} plain hotkey={b.hotkey} onPress={b.onPress}>
-              {b.text}
-            </Button>
-            {k === kept.length - 1 && <Box width={1} flexShrink={0} />}
-          </Box>
-        ))}
-      </Box>
-    )
-    const previewRow = !hasPreviewRow ? undefined : shownAt >= 0 ? (
-      <Box key="pv" flexDirection="row" backgroundColor={focusAt >= 0 ? SOFT_BG : undefined}>
-        {preview(shownAt)}
-      </Box>
-    ) : (
-      <Text key="pv" dimColor>
-        {clip(s.bandHint, W)}
-      </Text>
-    )
-    // 指到刻度時浮出的預覽（absolute）只蓋得住畫在它前面的東西：預覽列先畫，
-    // 刻度列後畫；用 column-reverse 讓刻度列仍在上面。
-    return (
-      <Box flexDirection="column-reverse">
-        {previewRow}
-        {tickRow}
-      </Box>
-    )
-  })
+  // 提示框上方（按鈕列或完整刻度列）與狀態列（刻度列＋預覽列）。
+  on('ui.render', { component: 'AbovePrompt' }, ($, e, next) => drawBand($, e, next, 'above'))
+  on('ui.render', { component: 'StatusLine' }, ($, e, next) => drawBand($, e, next, 'below'))
 }

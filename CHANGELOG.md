@@ -1,5 +1,17 @@
 # Changelog
 
+## prompt-jump 0.3.2
+
+### Changed, affects existing users
+
+- **The tick row moved under the prompt (new setting `tickRowPosition`, default `below`).** The ticks and the preview row now sit in the status line under the input, below claude-hud, and the row above the prompt shrinks to one row of buttons (`11/12  k: ‹  j: ›  a: Answer  l: List`). Claude Code only lets plugins draw text in the status line, so **ticks under the prompt are read-only**: point at one to preview it, but it cannot be clicked and the keyboard cannot move onto it. To jump, use the buttons above the prompt (`k`, `j`, `a`, `l`) or `/jump`, `/prev`, `/next`, `/ans`. To get the clickable tick row back exactly as in 0.3.1, set `tickRowPosition` to `above` in `/config`.
+- When claude-hud is tall, the status line has no rows to spare: the preview row is dropped first, then the ticks (the status line holds at most 5 rows, fewer on a short terminal, and claude-hud's lines count). Use a shorter claude-hud layout or `above`.
+
+### New
+
+- `/jump pane` and `/jump list` open the list, like `/jump` alone, so the list has a command that reads clearly now that the `l` button is not next to the ticks.
+- Layouts are unchanged where they cannot scroll: on the main-screen layout neither position draws the tick row, as before.
+
 ## prompt-jump 0.3.1
 
 ### Fixed

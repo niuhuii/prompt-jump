@@ -1,6 +1,6 @@
 {
   "name": "prompt-jump",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "license": "MIT",
   "description": "Jump back to any prompt you sent in a long Claude Code session: a prompt index pane, /prev /next /jump, bookmarks. 對話目錄：列出你問過的每一則，點一下或打 /jump 就捲回那裡。",
   "author": {
@@ -23,7 +23,7 @@
     "autoOpenPane": {
       "type": "boolean",
       "title": "Open the pane at start / 啟動時自動打開窗格",
-      "description": "Open the prompt list beside the chat when a session starts (it shows once the terminal is wide enough). Off (the default since 0.3.0): the tick row above the prompt is always there; press l on it or type /jump to open the list. 每次開始對話就打開清單（終端機夠寬時才會顯示）。關（0.3.0 起的預設）：提示框上方的刻度列一直都在，按 l 或打 /jump 再打開清單。",
+      "description": "Open the prompt list beside the chat when a session starts (it shows once the terminal is wide enough). Off (the default since 0.3.0): the tick row is always there; press l on it or type /jump to open the list. 每次開始對話就打開清單（終端機夠寬時才會顯示）。關（0.3.0 起的預設）：刻度列一直都在，按 l 或打 /jump 再打開清單。",
       "default": false
     },
     "language": {
@@ -48,6 +48,16 @@
       "title": "Model for auto titles / 自動標題用的模型",
       "description": "An alias or a full model id; used only when auto titles are on. 別名或完整 model id；只有自動標題開啟時才會用到。",
       "default": "haiku"
+    },
+    "tickRowPosition": {
+      "type": "string",
+      "title": "Tick row position / 刻度列位置",
+      "description": "below (default): the tick row and its preview sit in the status line under the input, below claude-hud; they are read-only (point to preview, no clicking), and one row of buttons (k j a l) stays above the input. above: the whole tick row above the input, ticks clickable. below（預設）：刻度列與預覽在輸入框下方的狀態列（claude-hud 下面），只能看與指、不能點；輸入框上方只留一列按鈕（k j a l）。above：整個刻度列在輸入框上方，刻度可以點。",
+      "options": [
+        "below",
+        "above"
+      ],
+      "default": "below"
     }
   }
 }

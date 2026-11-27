@@ -7,7 +7,7 @@ import type { TestBody } from 'claude-code/testing'
 import { cardTop } from '../hooks/card'
 import { STRINGS } from '../hooks/i18n'
 
-const ZH = { options: { language: 'zh-TW' } } as const
+const ZH = { options: { language: 'zh-TW', tickRowPosition: 'above' } } as const
 const zh = STRINGS['zh-TW']
 
 type T$ = Parameters<TestBody>[0]

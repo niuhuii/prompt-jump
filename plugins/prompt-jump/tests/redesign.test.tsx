@@ -11,7 +11,7 @@ import { planTicks } from '../hooks/ticks'
 import { widthOf } from '../hooks/toc'
 import { TranscriptIndex } from '../hooks/transcript'
 
-const ZH = { options: { language: 'zh-TW' } } as const
+const ZH = { options: { language: 'zh-TW', tickRowPosition: 'above' } } as const
 const zh = STRINGS['zh-TW']
 
 type T$ = Parameters<TestBody>[0]

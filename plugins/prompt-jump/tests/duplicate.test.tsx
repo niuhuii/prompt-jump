@@ -3,7 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
 /** 介面語言固定中文，不看這台機器的地區設定。 */
-const ZH = { options: { language: 'zh-TW' } } as const
+const ZH = { options: { language: 'zh-TW', tickRowPosition: 'above' } } as const
 
 type T$ = Parameters<TestBody>[0]
 type TOn = Parameters<TestBody>[1]

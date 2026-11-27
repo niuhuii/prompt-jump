@@ -86,6 +86,8 @@ export type JumpQuery =
 export const parseJump = (args: string): JumpQuery => {
   const text = args.trim()
   if (text === '') return { kind: 'pane' }
+  const asked = text.toLowerCase()
+  if (asked === 'pane' || asked === 'list' || asked === '清單') return { kind: 'pane' }
   const num = /^#?(\d+)$/.exec(text)
   if (num) return { kind: 'index', index: Number(num[1]) - 1 }
   if (/^-\d+$/.test(text)) return { kind: 'index', index: -Number(text.slice(1)) }

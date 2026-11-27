@@ -3,7 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
 /** 介面語言固定中文，不看這台機器的地區設定。 */
-const ZH = { options: { language: 'zh-TW' } } as const
+const ZH = { options: { language: 'zh-TW', tickRowPosition: 'above' } } as const
 
 // 測試環境沒有真的對話畫面：外掛的 $.ui.scroll 捲對話列時拿不到實作，
 // 外掛照實回報「捲不過去」並附上目標。所以這裡用回報文字裡的目標確認它要跳去

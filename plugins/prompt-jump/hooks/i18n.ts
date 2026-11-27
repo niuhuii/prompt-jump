@@ -33,6 +33,10 @@ export type Strings = {
   bandAnswer: string
   bandList: string
   bandHint: string
+  /** 刻度列在下方（唯讀）時，不知道目前位置的提示。 */
+  bandHintBelow: string
+  /** 唯讀刻度列右邊的指令提示。 */
+  bandCommands: string
   pickerJump: string
   searchTitle: (words: string) => string
   pickerMarks: string
@@ -143,6 +147,8 @@ export const STRINGS: Record<Lang, Strings> = {
     bandAnswer: '回答',
     bandList: '清單',
     bandHint: '指到刻度看那一則，點一下跳過去；ctrl+x tab 後可以用 k j a l 和方向鍵',
+    bandHintBelow: '指到刻度看那一則；要跳過去用上方的 k j，或 /jump /prev /next /ans',
+    bandCommands: '/jump /prev /next /ans',
     pickerJump: '跳到',
     searchTitle: words => `「${words}」`,
     pickerMarks: '書籤',
@@ -163,7 +169,7 @@ export const STRINGS: Record<Lang, Strings> = {
     layoutHelp: [
       'prompt-jump：為什麼點了不會捲動',
       '',
-      'Claude Code 有兩種畫面：一般版面和全螢幕版面。一般版面的對話放在終端機自己的捲動區，外掛捲不動，所以點目錄、按上一則下一則都不會跳；提示框上方的刻度列也只在全螢幕版面出現。',
+      'Claude Code 有兩種畫面：一般版面和全螢幕版面。一般版面的對話放在終端機自己的捲動區，外掛捲不動，所以點目錄、按上一則下一則都不會跳；刻度列也只在全螢幕版面出現。',
       '',
       '開全螢幕版面，三種方法擇一：',
       '  /tui fullscreen',
@@ -269,6 +275,8 @@ export const STRINGS: Record<Lang, Strings> = {
     bandAnswer: 'Answer',
     bandList: 'List',
     bandHint: 'Point at a tick to preview, click to jump; after ctrl+x tab: k j a l and the arrows',
+    bandHintBelow: 'Point at a tick to preview it; to jump use k j above, or /jump /prev /next /ans',
+    bandCommands: '/jump /prev /next /ans',
     pickerJump: 'Jump to',
     searchTitle: words => `“${words}”`,
     pickerMarks: 'Bookmarks',
@@ -289,7 +297,7 @@ export const STRINGS: Record<Lang, Strings> = {
     layoutHelp: [
       'prompt-jump: why picking a prompt does not scroll',
       '',
-      'Claude Code draws in one of two layouts: the main screen and the fullscreen layout. On the main screen the transcript lives in your terminal’s own scrollback, which a plugin cannot scroll, so the index, Prev and Next cannot jump there; the tick row above the prompt only shows in the fullscreen layout.',
+      'Claude Code draws in one of two layouts: the main screen and the fullscreen layout. On the main screen the transcript lives in your terminal’s own scrollback, which a plugin cannot scroll, so the index, Prev and Next cannot jump there; the tick row only shows in the fullscreen layout.',
       '',
       'To turn on the fullscreen layout, pick one:',
       '  /tui fullscreen',
